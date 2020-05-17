@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@ import { Injectable } from '@angular/core';
 import { CoreContentLinksHandlerBase } from '@core/contentlinks/classes/base-handler';
 import { CoreContentLinksAction } from '@core/contentlinks/providers/delegate';
 import { CoreLoginHelperProvider } from '@core/login/providers/helper';
+import { CoreDashboardMainMenuHandler } from './mainmenu-handler';
 
 /**
  * Handler to treat links to my overview.
@@ -23,29 +24,41 @@ import { CoreLoginHelperProvider } from '@core/login/providers/helper';
 @Injectable()
 export class CoreCoursesDashboardLinkHandler extends CoreContentLinksHandlerBase {
     name = 'CoreCoursesMyOverviewLinkHandler';
-    featureName = 'CoreMainMenuDelegate_CoreCourses';
     pattern = /\/my\/?$/;
 
-    constructor(private loginHelper: CoreLoginHelperProvider) {
+    constructor(private loginHelper: CoreLoginHelperProvider, private mainMenuHandler: CoreDashboardMainMenuHandler) {
         super();
     }
 
     /**
      * Get the list of actions for a link (url).
      *
-     * @param {string[]} siteIds List of sites the URL belongs to.
-     * @param {string} url The URL to treat.
-     * @param {any} params The params of the URL. E.g. 'mysite.com?id=1' -> {id: 1}
-     * @param {number} [courseId] Course ID related to the URL. Optional but recommended.
-     * @return {CoreContentLinksAction[]|Promise<CoreContentLinksAction[]>} List of (or promise resolved with list of) actions.
+     * @param siteIds List of sites the URL belongs to.
+     * @param url The URL to treat.
+     * @param params The params of the URL. E.g. 'mysite.com?id=1' -> {id: 1}
+     * @param courseId Course ID related to the URL. Optional but recommended.
+     * @return List of (or promise resolved with list of) actions.
      */
     getActions(siteIds: string[], url: string, params: any, courseId?: number):
             CoreContentLinksAction[] | Promise<CoreContentLinksAction[]> {
         return [{
             action: (siteId, navCtrl?): void => {
-                // Always use redirect to make it the new history root (to avoid "loops" in history).
+                // Use redirect to select the tab.
                 this.loginHelper.redirect('CoreCoursesDashboardPage', undefined, siteId);
             }
         }];
+    }
+
+    /**
+     * Check if the handler is enabled for a certain site (site + user) and a URL.
+     *
+     * @param siteId The site ID.
+     * @param url The URL to treat.
+     * @param params The params of the URL. E.g. 'mysite.com?id=1' -> {id: 1}
+     * @param courseId Course ID related to the URL. Optional but recommended.
+     * @return Whether the handler is enabled for the URL and site.
+     */
+    isEnabled(siteId: string, url: string, params: any, courseId?: number): boolean | Promise<boolean> {
+        return this.mainMenuHandler.isEnabledForSite(siteId);
     }
 }

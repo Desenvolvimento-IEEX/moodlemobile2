@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,10 +14,17 @@
 
 import { Component, OnDestroy } from '@angular/core';
 import { IonicPage } from 'ionic-angular';
-import { AddonMessagesProvider } from '../../providers/messages';
+import {
+    AddonMessagesProvider, AddonMessagesMessagePreferences, AddonMessagesMessagePreferencesNotification,
+    AddonMessagesMessagePreferencesNotificationProcessor
+} from '../../providers/messages';
 import { CoreUserProvider } from '@core/user/providers/user';
-import { CoreDomUtilsProvider } from '@providers/utils/dom';
+import { CoreAppProvider } from '@providers/app';
+import { CoreConfigProvider } from '@providers/config';
+import { CoreEventsProvider } from '@providers/events';
 import { CoreSitesProvider } from '@providers/sites';
+import { CoreDomUtilsProvider } from '@providers/utils/dom';
+import { CoreConstants } from '@core/constants';
 
 /**
  * Page that displays the messages settings page.
@@ -30,7 +37,7 @@ import { CoreSitesProvider } from '@providers/sites';
 export class AddonMessagesSettingsPage implements OnDestroy {
     protected updateTimeout: any;
 
-    preferences: any;
+    preferences: AddonMessagesMessagePreferences;
     preferencesLoaded: boolean;
     contactablePrivacy: number | boolean;
     advancedContactable = false; // Whether the site supports "advanced" contactable privacy.
@@ -39,16 +46,27 @@ export class AddonMessagesSettingsPage implements OnDestroy {
     courseMemberValue = AddonMessagesProvider.MESSAGE_PRIVACY_COURSEMEMBER;
     siteValue = AddonMessagesProvider.MESSAGE_PRIVACY_SITE;
     groupMessagingEnabled: boolean;
+    sendOnEnter: boolean;
+    isDesktop: boolean;
+    isMac: boolean;
 
     protected previousContactableValue: number | boolean;
 
     constructor(private messagesProvider: AddonMessagesProvider, private domUtils: CoreDomUtilsProvider,
-            private userProvider: CoreUserProvider, sitesProvider: CoreSitesProvider) {
+            private userProvider: CoreUserProvider, private sitesProvider: CoreSitesProvider, appProvider: CoreAppProvider,
+            private configProvider: CoreConfigProvider, private eventsProvider: CoreEventsProvider) {
 
         const currentSite = sitesProvider.getCurrentSite();
         this.advancedContactable = currentSite && currentSite.isVersionGreaterEqualThan('3.6');
         this.allowSiteMessaging = currentSite && currentSite.canUseAdvancedFeature('messagingallusers');
         this.groupMessagingEnabled = this.messagesProvider.isGroupMessagingEnabled();
+
+        this.configProvider.get(CoreConstants.SETTINGS_SEND_ON_ENTER, !appProvider.isMobile()).then((sendOnEnter) => {
+            this.sendOnEnter = !!sendOnEnter;
+        });
+
+        this.isDesktop = !appProvider.isMobile();
+        this.isMac = appProvider.isMac();
     }
 
     /**
@@ -63,9 +81,9 @@ export class AddonMessagesSettingsPage implements OnDestroy {
     /**
      * Fetches preference data.
      *
-     * @return {Promise<any>} Resolved when done.
+     * @return Promise resolved when done.
      */
-    protected fetchPreferences(): Promise<any> {
+    protected fetchPreferences(): Promise<void> {
         return this.messagesProvider.getMessagePreferences().then((preferences) => {
             if (this.groupMessagingEnabled) {
                 // Simplify the preferences.
@@ -75,11 +93,12 @@ export class AddonMessagesSettingsPage implements OnDestroy {
                         return notification.preferencekey == AddonMessagesProvider.NOTIFICATION_PREFERENCES_KEY;
                     });
 
-                    for (const notification of component.notifications) {
-                        for (const processor of notification.processors) {
+                    component.notifications.forEach((notification) => {
+                        notification.processors.forEach(
+                                (processor: AddonMessagesMessagePreferencesNotificationProcessorFormatted) => {
                             processor.checked = processor.loggedin.checked || processor.loggedoff.checked;
-                        }
-                    }
+                        });
+                    });
                 }
             }
 
@@ -118,7 +137,7 @@ export class AddonMessagesSettingsPage implements OnDestroy {
     /**
      * Save the contactable privacy setting..
      *
-     * @param {number|boolean} value The value to set.
+     * @param value The value to set.
      */
     saveContactablePrivacy(value: number | boolean): void {
         if (this.contactablePrivacy == this.previousContactableValue) {
@@ -149,18 +168,20 @@ export class AddonMessagesSettingsPage implements OnDestroy {
     /**
      * Change the value of a certain preference.
      *
-     * @param {any}    notification Notification object.
-     * @param {string} state        State name, ['loggedin', 'loggedoff'].
-     * @param {any}    processor    Notification processor.
+     * @param notification Notification object.
+     * @param state State name, ['loggedin', 'loggedoff'].
+     * @param processor Notification processor.
      */
-    changePreference(notification: any, state: string, processor: any): void {
+    changePreference(notification: AddonMessagesMessagePreferencesNotificationFormatted, state: string,
+            processor: AddonMessagesMessagePreferencesNotificationProcessorFormatted): void {
+
         if (this.groupMessagingEnabled) {
             // Update both states at the same time.
             const valueArray = [],
                 promises = [];
             let value = 'none';
 
-            notification.processors.forEach((processor) => {
+            notification.processors.forEach((processor: AddonMessagesMessagePreferencesNotificationProcessorFormatted) => {
                 if (processor.checked) {
                     valueArray.push(processor.name);
                 }
@@ -223,7 +244,7 @@ export class AddonMessagesSettingsPage implements OnDestroy {
     /**
      * Refresh the list of preferences.
      *
-     * @param {any} refresher Refresher.
+     * @param refresher Refresher.
      */
     refreshPreferences(refresher: any): void {
         this.messagesProvider.invalidateMessagePreferences().finally(() => {
@@ -231,6 +252,15 @@ export class AddonMessagesSettingsPage implements OnDestroy {
                 refresher.complete();
             });
         });
+    }
+
+    sendOnEnterChanged(): void {
+        // Save the value.
+        this.configProvider.set(CoreConstants.SETTINGS_SEND_ON_ENTER, this.sendOnEnter ? 1 : 0);
+
+        // Notify the app.
+        this.eventsProvider.trigger(CoreEventsProvider.SEND_ON_ENTER_CHANGED, {sendOnEnter: !!this.sendOnEnter},
+                this.sitesProvider.getCurrentSiteId());
     }
 
     /**
@@ -244,3 +274,17 @@ export class AddonMessagesSettingsPage implements OnDestroy {
         }
     }
 }
+
+/**
+ * Message preferences notification with some caclulated data.
+ */
+type AddonMessagesMessagePreferencesNotificationFormatted = AddonMessagesMessagePreferencesNotification & {
+    updating?: boolean | {[state: string]: boolean}; // Calculated in the app. Whether the notification is being updated.
+};
+
+/**
+ * Message preferences notification processor with some caclulated data.
+ */
+type AddonMessagesMessagePreferencesNotificationProcessorFormatted = AddonMessagesMessagePreferencesNotificationProcessor & {
+    checked?: boolean; // Calculated in the app. Whether the processor is checked either for loggedin or loggedoff.
+};

@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,11 +23,13 @@ import { CoreTextUtilsProvider } from '@providers/utils/text';
 import { CoreTimeUtilsProvider } from '@providers/utils/time';
 import { CoreUtilsProvider } from '@providers/utils/utils';
 import { CoreCourseProvider } from '@core/course/providers/course';
+import { CoreCourseLogHelperProvider } from '@core/course/providers/log-helper';
 import { CoreGradesHelperProvider } from '@core/grades/providers/helper';
 import { CoreSyncBaseProvider } from '@classes/base-sync';
-import { AddonModAssignProvider } from './assign';
+import { AddonModAssignProvider, AddonModAssignAssign } from './assign';
 import { AddonModAssignOfflineProvider } from './assign-offline';
 import { AddonModAssignSubmissionDelegate } from './submission-delegate';
+import { AddonModAssignFeedbackDelegate } from './feedback-delegate';
 
 /**
  * Data returned by an assign sync.
@@ -35,13 +37,11 @@ import { AddonModAssignSubmissionDelegate } from './submission-delegate';
 export interface AddonModAssignSyncResult {
     /**
      * List of warnings.
-     * @type {string[]}
      */
     warnings: string[];
 
     /**
      * Whether data was updated in the site.
-     * @type {boolean}
      */
     updated: boolean;
 }
@@ -56,12 +56,22 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
 
     protected componentTranslate: string;
 
-    constructor(loggerProvider: CoreLoggerProvider, sitesProvider: CoreSitesProvider, appProvider: CoreAppProvider,
-            syncProvider: CoreSyncProvider, textUtils: CoreTextUtilsProvider, translate: TranslateService,
-            private courseProvider: CoreCourseProvider, private eventsProvider: CoreEventsProvider,
-            private assignProvider: AddonModAssignProvider, private assignOfflineProvider: AddonModAssignOfflineProvider,
-            private utils: CoreUtilsProvider, private submissionDelegate: AddonModAssignSubmissionDelegate,
-            private gradesHelper: CoreGradesHelperProvider, timeUtils: CoreTimeUtilsProvider) {
+    constructor(loggerProvider: CoreLoggerProvider,
+            sitesProvider: CoreSitesProvider,
+            appProvider: CoreAppProvider,
+            syncProvider: CoreSyncProvider,
+            textUtils: CoreTextUtilsProvider,
+            translate: TranslateService,
+            timeUtils: CoreTimeUtilsProvider,
+            protected courseProvider: CoreCourseProvider,
+            protected eventsProvider: CoreEventsProvider,
+            protected assignProvider: AddonModAssignProvider,
+            protected assignOfflineProvider: AddonModAssignOfflineProvider,
+            protected utils: CoreUtilsProvider,
+            protected submissionDelegate: AddonModAssignSubmissionDelegate,
+            protected feedbackDelegate: AddonModAssignFeedbackDelegate,
+            protected gradesHelper: CoreGradesHelperProvider,
+            protected logHelper: CoreCourseLogHelperProvider) {
 
         super('AddonModAssignSyncProvider', loggerProvider, sitesProvider, appProvider, syncProvider, textUtils, translate,
                 timeUtils);
@@ -72,9 +82,9 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
     /**
      * Convenience function to get scale selected option.
      *
-     * @param {string} options Possible options.
-     * @param {number} selected Selected option to search.
-     * @return {number} Index of the selected option.
+     * @param options Possible options.
+     * @param selected Selected option to search.
+     * @return Index of the selected option.
      */
     protected getSelectedScaleId(options: string, selected: string): number {
         let optionsList = options.split(',');
@@ -96,9 +106,9 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
     /**
      * Check if an assignment has data to synchronize.
      *
-     * @param {number} assignId Assign ID.
-     * @param {string} [siteId] Site ID. If not defined, current site.
-     * @return {Promise<boolean>} Promise resolved with boolean: whether it has data to sync.
+     * @param assignId Assign ID.
+     * @param siteId Site ID. If not defined, current site.
+     * @return Promise resolved with boolean: whether it has data to sync.
      */
     hasDataToSync(assignId: number, siteId?: string): Promise<boolean> {
         return this.assignOfflineProvider.hasAssignOfflineData(assignId, siteId);
@@ -107,27 +117,29 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
     /**
      * Try to synchronize all the assignments in a certain site or in all sites.
      *
-     * @param {string} [siteId] Site ID to sync. If not defined, sync all sites.
-     * @return {Promise<any>} Promise resolved if sync is successful, rejected if sync fails.
+     * @param siteId Site ID to sync. If not defined, sync all sites.
+     * @param force Wether to force sync not depending on last execution.
+     * @return Promise resolved if sync is successful, rejected if sync fails.
      */
-    syncAllAssignments(siteId?: string): Promise<any> {
-        return this.syncOnSites('all assignments', this.syncAllAssignmentsFunc.bind(this), [], siteId);
+    syncAllAssignments(siteId?: string, force?: boolean): Promise<any> {
+        return this.syncOnSites('all assignments', this.syncAllAssignmentsFunc.bind(this), [force], siteId);
     }
 
     /**
      * Sync all assignments on a site.
      *
-     * @param {string} [siteId] Site ID to sync. If not defined, sync all sites.
-     * @param {Promise<any>} Promise resolved if sync is successful, rejected if sync fails.
+     * @param siteId Site ID to sync. If not defined, sync all sites.
+     * @param force Wether to force sync not depending on last execution.
+     * @param Promise resolved if sync is successful, rejected if sync fails.
      */
-    protected syncAllAssignmentsFunc(siteId?: string): Promise<any> {
+    protected syncAllAssignmentsFunc(siteId?: string, force?: boolean): Promise<any> {
         // Get all assignments that have offline data.
         return this.assignOfflineProvider.getAllAssigns(siteId).then((assignIds) => {
-            const promises = [];
-
             // Sync all assignments that haven't been synced for a while.
-            assignIds.forEach((assignId) => {
-                promises.push(this.syncAssignIfNeeded(assignId, siteId).then((data) => {
+            const promises = assignIds.map((assignId) => {
+                const promise = force ? this.syncAssign(assignId, siteId) : this.syncAssignIfNeeded(assignId, siteId);
+
+                return promise.then((data) => {
                     if (data && data.updated) {
                         // Sync done. Send event.
                         this.eventsProvider.trigger(AddonModAssignSyncProvider.AUTO_SYNCED, {
@@ -135,7 +147,7 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
                             warnings: data.warnings
                         }, siteId);
                     }
-                }));
+                });
             });
 
             return Promise.all(promises);
@@ -145,9 +157,9 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
     /**
      * Sync an assignment only if a certain time has passed since the last time.
      *
-     * @param {number} assignId Assign ID.
-     * @param {string} [siteId] Site ID. If not defined, current site.
-     * @return {Promise<void|AddonModAssignSyncResult>} Promise resolved when the assign is synced or it doesn't need to be synced.
+     * @param assignId Assign ID.
+     * @param siteId Site ID. If not defined, current site.
+     * @return Promise resolved when the assign is synced or it doesn't need to be synced.
      */
     syncAssignIfNeeded(assignId: number, siteId?: string): Promise<void | AddonModAssignSyncResult> {
         return this.isSyncNeeded(assignId, siteId).then((needed) => {
@@ -160,21 +172,21 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
     /**
      * Try to synchronize an assign.
      *
-     * @param {number} assignId Assign ID.
-     * @param {string} [siteId] Site ID. If not defined, current site.
-     * @return {Promise<AddonModAssignSyncResult>} Promise resolved in success.
+     * @param assignId Assign ID.
+     * @param siteId Site ID. If not defined, current site.
+     * @return Promise resolved in success.
      */
     syncAssign(assignId: number, siteId?: string): Promise<AddonModAssignSyncResult> {
         siteId = siteId || this.sitesProvider.getCurrentSiteId();
 
-        const promises = [],
+        const promises: Promise<any>[] = [],
             result: AddonModAssignSyncResult = {
                 warnings: [],
                 updated: false
             };
-        let assign,
-            courseId,
-            syncPromise;
+        let assign: AddonModAssignAssign,
+            courseId: number,
+            syncPromise: Promise<any>;
 
         if (this.isSyncing(assignId, siteId)) {
             // There's already a sync ongoing for this assign, return the promise.
@@ -202,6 +214,9 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
             return [];
         }));
 
+        // Sync offline logs.
+        promises.push(this.logHelper.syncIfNeeded(AddonModAssignProvider.COMPONENT, assignId, siteId));
+
         syncPromise = Promise.all(promises).then((results) => {
             const submissions = results[0],
                 grades = results[1];
@@ -216,7 +231,7 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
 
             courseId = submissions.length > 0 ? submissions[0].courseid : grades[0].courseid;
 
-            return this.assignProvider.getAssignmentById(courseId, assignId, siteId).then((assignData) => {
+            return this.assignProvider.getAssignmentById(courseId, assignId, false, siteId).then((assignData) => {
                 assign = assignData;
 
                 const promises = [];
@@ -258,19 +273,19 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
     /**
      * Synchronize a submission.
      *
-     * @param {any} assign Assignment.
-     * @param {any} offlineData Submission offline data.
-     * @param {string[]} warnings List of warnings.
-     * @param {string} [siteId] Site ID. If not defined, current site.
-     * @return {Promise<any>} Promise resolved if success, rejected otherwise.
+     * @param assign Assignment.
+     * @param offlineData Submission offline data.
+     * @param warnings List of warnings.
+     * @param siteId Site ID. If not defined, current site.
+     * @return Promise resolved if success, rejected otherwise.
      */
-    protected syncSubmission(assign: any, offlineData: any, warnings: string[], siteId?: string): Promise<any> {
+    protected syncSubmission(assign: AddonModAssignAssign, offlineData: any, warnings: string[], siteId?: string): Promise<any> {
         const userId = offlineData.userid,
             pluginData = {};
         let discardError,
             submission;
 
-        return this.assignProvider.getSubmissionStatus(assign.id, userId, false, true, true, siteId).then((status) => {
+        return this.assignProvider.getSubmissionStatus(assign.id, userId, undefined, false, true, true, siteId).then((status) => {
             const promises = [];
 
             submission = this.assignProvider.getSubmissionObjectFromAttempt(assign, status.lastattempt);
@@ -305,7 +320,7 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
                     }
                 }).then(() => {
                     // Submission data sent, update cached data. No need to block the user for this.
-                    this.assignProvider.getSubmissionStatus(assign.id, userId, false, true, true, siteId);
+                    this.assignProvider.getSubmissionStatus(assign.id, userId, undefined, false, true, true, siteId);
                 });
             }).catch((error) => {
                 if (error && this.utils.isWebServiceError(error)) {
@@ -346,20 +361,20 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
     /**
      * Synchronize a submission grade.
      *
-     * @param {any} assign Assignment.
-     * @param {any} offlineData Submission grade offline data.
-     * @param {string[]} warnings List of warnings.
-     * @param {number} courseId Course Id.
-     * @param {string} [siteId] Site ID. If not defined, current site.
-     * @return {Promise<any>} Promise resolved if success, rejected otherwise.
+     * @param assign Assignment.
+     * @param offlineData Submission grade offline data.
+     * @param warnings List of warnings.
+     * @param courseId Course Id.
+     * @param siteId Site ID. If not defined, current site.
+     * @return Promise resolved if success, rejected otherwise.
      */
-    protected syncSubmissionGrade(assign: any, offlineData: any, warnings: string[], courseId: number, siteId?: string)
-            : Promise<any> {
+    protected syncSubmissionGrade(assign: AddonModAssignAssign, offlineData: any, warnings: string[], courseId: number,
+            siteId?: string): Promise<any> {
 
         const userId = offlineData.userid;
         let discardError;
 
-        return this.assignProvider.getSubmissionStatus(assign.id, userId, false, true, true, siteId).then((status) => {
+        return this.assignProvider.getSubmissionStatus(assign.id, userId, undefined, false, true, true, siteId).then((status) => {
             const timemodified = status.feedback && (status.feedback.gradeddate || status.feedback.grade.timemodified);
 
             if (timemodified > offlineData.timemodified) {
@@ -398,9 +413,19 @@ export class AddonModAssignSyncProvider extends CoreSyncBaseProvider {
                 return this.assignProvider.submitGradingFormOnline(assign.id, userId, offlineData.grade, offlineData.attemptnumber,
                         offlineData.addattempt, offlineData.workflowstate, offlineData.applytoall, offlineData.outcomes,
                         offlineData.plugindata, siteId).then(() => {
+                    // Grades sent.
+                    // Discard grades drafts.
+                    const promises = [];
+                    if (status.feedback && status.feedback.plugins) {
+                        status.feedback.plugins.forEach((plugin) => {
+                            promises.push(this.feedbackDelegate.discardPluginFeedbackData(assign.id, userId, plugin, siteId));
+                        });
+                    }
 
-                    // Grades sent, update cached data. No need to block the user for this.
-                    this.assignProvider.getSubmissionStatus(assign.id, userId, false, true, true, siteId);
+                    // Update cached data.
+                    promises.push(this.assignProvider.getSubmissionStatus(assign.id, userId, undefined, false, true, true, siteId));
+
+                    return Promise.all(promises);
                 }).catch((error) => {
                     if (error && this.utils.isWebServiceError(error)) {
                         // The WebService has thrown an error, this means it cannot be submitted. Discard the offline data.

@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Component, ViewChild } from '@angular/core';
+import { Component, ViewChild, ElementRef } from '@angular/core';
 import { Content, IonicPage, NavParams, NavController } from 'ionic-angular';
 import { TranslateService } from '@ngx-translate/core';
 import { FormGroup } from '@angular/forms';
@@ -28,6 +28,7 @@ import { AddonModDataHelperProvider } from '../../providers/helper';
 import { AddonModDataOfflineProvider } from '../../providers/offline';
 import { AddonModDataFieldsDelegate } from '../../providers/fields-delegate';
 import { AddonModDataComponentsModule } from '../../components/components.module';
+import { CoreTagProvider } from '@core/tag/providers/tag';
 
 /**
  * Page that displays the view edit page.
@@ -39,13 +40,13 @@ import { AddonModDataComponentsModule } from '../../components/components.module
 })
 export class AddonModDataEditPage {
     @ViewChild(Content) content: Content;
+    @ViewChild('editFormEl') formElement: ElementRef;
 
     protected module: any;
     protected courseId: number;
     protected data: any;
     protected entryId: number;
     protected entry: any;
-    protected offlineActions = [];
     protected fields = {};
     protected fieldsArray = [];
     protected siteId: string;
@@ -57,7 +58,6 @@ export class AddonModDataEditPage {
     loaded = false;
     selectedGroup = 0;
     cssClass = '';
-    cssTemplate = '';
     groupInfo: any;
     editFormRender = '';
     editForm: FormGroup;
@@ -70,7 +70,8 @@ export class AddonModDataEditPage {
             protected courseProvider: CoreCourseProvider, protected dataProvider: AddonModDataProvider,
             protected dataOffline: AddonModDataOfflineProvider, protected dataHelper: AddonModDataHelperProvider,
             sitesProvider: CoreSitesProvider, protected navCtrl: NavController, protected translate: TranslateService,
-            protected eventsProvider: CoreEventsProvider, protected fileUploaderProvider: CoreFileUploaderProvider) {
+            protected eventsProvider: CoreEventsProvider, protected fileUploaderProvider: CoreFileUploaderProvider,
+            private tagProvider: CoreTagProvider) {
         this.module = params.get('module') || {};
         this.entryId = params.get('entryId') || null;
         this.courseId = params.get('courseId');
@@ -93,36 +94,33 @@ export class AddonModDataEditPage {
     /**
      * Check if we can leave the page or not and ask to confirm the lost of data.
      *
-     * @return {boolean | Promise<void>} Resolved if we can leave it, rejected if not.
+     * @return Resolved if we can leave it, rejected if not.
      */
-    ionViewCanLeave(): boolean | Promise<void> {
-        if (this.forceLeave) {
-            return true;
+    async ionViewCanLeave(): Promise<void> {
+        if (this.forceLeave || !this.entry) {
+            return;
         }
 
         const inputData = this.editForm.value;
 
-        return this.dataHelper.hasEditDataChanged(inputData, this.fieldsArray, this.data.id,
-                this.entry.contents).then((changed) => {
-            if (!changed) {
-                return Promise.resolve();
-            }
+        const changed = await this.dataHelper.hasEditDataChanged(inputData, this.fieldsArray, this.data.id, this.entry.contents);
 
+        if (changed) {
             // Show confirmation if some data has been modified.
-            return  this.domUtils.showConfirm(this.translate.instant('core.confirmcanceledit'));
-        }).then(() => {
-            // Delete the local files from the tmp folder.
-            return this.dataHelper.getEditTmpFiles(inputData, this.fieldsArray, this.data.id,
-                    this.entry.contents).then((files) => {
-                this.fileUploaderProvider.clearTmpFiles(files);
-            });
-        });
+            await this.domUtils.showConfirm(this.translate.instant('core.confirmcanceledit'));
+        }
+
+        // Delete the local files from the tmp folder.
+        const files = await this.dataHelper.getEditTmpFiles(inputData, this.fieldsArray, this.data.id, this.entry.contents);
+        this.fileUploaderProvider.clearTmpFiles(files);
+
+        this.domUtils.triggerFormCancelledEvent(this.formElement, this.siteId);
     }
 
     /**
      * Fetch the entry data.
      *
-     * @return {Promise<any>}         Resolved when done.
+     * @return Resolved when done.
      */
     protected fetchEntryData(): Promise<any> {
         return this.dataProvider.getDatabase(this.courseId, this.module.id).then((data) => {
@@ -132,47 +130,21 @@ export class AddonModDataEditPage {
 
             return this.dataProvider.getDatabaseAccessInformation(data.id);
         }).then((accessData) => {
-            this.cssTemplate = this.dataHelper.prefixCSS(this.data.csstemplate, '.' + this.cssClass);
-
             if (this.entryId) {
-                return this.groupsProvider.getActivityGroupInfo(this.data.coursemodule, accessData.canmanageentries)
-                        .then((groupInfo) => {
+                return this.groupsProvider.getActivityGroupInfo(this.data.coursemodule).then((groupInfo) => {
                     this.groupInfo = groupInfo;
-
-                    // Check selected group is accessible.
-                    if (groupInfo && groupInfo.groups && groupInfo.groups.length > 0) {
-                        if (!groupInfo.groups.some((group) => this.selectedGroup == group.id)) {
-                            this.selectedGroup = groupInfo.groups[0].id;
-                        }
-                    }
+                    this.selectedGroup = this.groupsProvider.validateGroupId(this.selectedGroup, groupInfo);
                 });
             }
         }).then(() => {
-            return this.dataOffline.getEntryActions(this.data.id, this.entryId);
-        }).then((actions) => {
-            this.offlineActions = actions;
-
             return this.dataProvider.getFields(this.data.id);
         }).then((fieldsData) => {
             this.fieldsArray = fieldsData;
             this.fields = this.utils.arrayToObject(fieldsData, 'id');
 
-            return this.dataHelper.getEntry(this.data, this.entryId, this.offlineActions);
+            return this.dataHelper.fetchEntry(this.data, fieldsData, this.entryId);
         }).then((entry) => {
-             if (entry) {
-                entry = entry.entry;
-
-                // Index contents by fieldid.
-                entry.contents = this.utils.arrayToObject(entry.contents, 'fieldid');
-            } else {
-                entry = {
-                    contents: {}
-                };
-            }
-
-            return this.dataHelper.applyOfflineActions(entry, this.offlineActions, this.fieldsArray);
-        }).then((entryData) => {
-            this.entry = entryData;
+            this.entry = entry.entry;
 
             this.editFormRender = this.displayEditFields();
         }).catch((message) => {
@@ -185,8 +157,8 @@ export class AddonModDataEditPage {
     /**
      * Saves data.
      *
-     * @param {Event} e Event.
-     * @return {Promise<any>} Resolved when done.
+     * @param e Event.
+     * @return Resolved when done.
      */
     save(e: Event): Promise<any> {
         e.preventDefault();
@@ -242,6 +214,9 @@ export class AddonModDataEditPage {
 
                 // This is done if entry is updated when editing or creating if not.
                 if ((this.entryId && result.updated) || (!this.entryId && result.newentryid)) {
+
+                    this.domUtils.triggerFormSubmittedEvent(this.formElement, result.sent, this.siteId);
+
                     const promises = [];
 
                     this.entryId = this.entryId || result.newentryid;
@@ -282,8 +257,8 @@ export class AddonModDataEditPage {
     /**
      * Set group to see the database.
      *
-     * @param  {number}       groupId Group identifier to set.
-     * @return {Promise<any>}         Resolved when done.
+     * @param groupId Group identifier to set.
+     * @return Resolved when done.
      */
     setGroup(groupId: number): Promise<any> {
         this.selectedGroup = groupId;
@@ -295,7 +270,7 @@ export class AddonModDataEditPage {
     /**
      * Displays Edit Search Fields.
      *
-     * @return {string}  Generated HTML.
+     * @return Generated HTML.
      */
     protected displayEditFields(): string {
         this.jsData = {
@@ -308,7 +283,7 @@ export class AddonModDataEditPage {
 
         let replace,
             render,
-            template = this.data.addtemplate || this.dataHelper.getDefaultTemplate('add', this.fieldsArray);
+            template = this.dataHelper.getTemplate(this.data, 'addtemplate', this.fieldsArray);
 
         // Replace the fields found on template.
         this.fieldsArray.forEach((field) => {
@@ -330,13 +305,18 @@ export class AddonModDataEditPage {
             template = template.replace(replace, 'field_' + field.id);
         });
 
+        // Editing tags is not supported.
+        replace = new RegExp('##tags##', 'gi');
+        const message = '<p class="item-dimmed">{{ \'addon.mod_data.edittagsnotsupported\' | translate }}</p>';
+        template = template.replace(replace, this.tagProvider.areTagsAvailableInSite() ? message : '');
+
         return template;
     }
 
     /**
      * Return to the entry list (previous page) discarding temp data.
      *
-     * @return {Promise<any>}  Resolved when done.
+     * @return Resolved when done.
      */
     protected returnToEntryList(): Promise<any> {
         const inputData = this.editForm.value;

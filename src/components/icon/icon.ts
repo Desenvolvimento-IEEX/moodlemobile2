@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Component, Input, OnInit, OnDestroy, ElementRef } from '@angular/core';
+import { Component, Input, OnChanges, OnDestroy, ElementRef, SimpleChange } from '@angular/core';
+import { Config } from 'ionic-angular';
 
 /**
  * Core Icon is a component that enabled a posibility to add fontawesome icon to the html. It's recommended if both fontawesome
@@ -24,10 +25,11 @@ import { Component, Input, OnInit, OnDestroy, ElementRef } from '@angular/core';
     selector: 'core-icon',
     templateUrl: 'core-icon.html',
 })
-export class CoreIconComponent implements OnInit, OnDestroy {
+export class CoreIconComponent implements OnChanges, OnDestroy {
     // Common params.
     @Input() name: string;
     @Input('color') color?: string;
+    @Input('slash') slash?: boolean; // Display a red slash over the icon.
 
     // Ionicons params.
     @Input('isActive') isActive?: boolean;
@@ -37,20 +39,30 @@ export class CoreIconComponent implements OnInit, OnDestroy {
     // FontAwesome params.
     @Input('fixed-width') fixedWidth: string;
 
+    @Input('label') ariaLabel?: string;
+
     protected element: HTMLElement;
     protected newElement: HTMLElement;
 
-    constructor(el: ElementRef) {
+    constructor(el: ElementRef, private config: Config) {
         this.element = el.nativeElement;
     }
 
     /**
-     * Component being initialized.
+     * Detect changes on input properties.
      */
-    ngOnInit(): void {
+    ngOnChanges(changes: {[name: string]: SimpleChange}): void {
+        if (!changes.name || !this.name) {
+            return;
+        }
+
+        const oldElement = this.newElement ? this.newElement : this.element;
+
+        // Use a new created element to avoid ion-icon working.
+        // This is necessary to make the FontAwesome stuff work.
+        // It is also required to stop Ionic overriding the aria-label attribute.
+        this.newElement = document.createElement('ion-icon');
         if (this.name.startsWith('fa-')) {
-            // Use a new created element to avoid ion-icon working.
-            this.newElement = document.createElement('ion-icon');
             this.newElement.classList.add('icon');
             this.newElement.classList.add('fa');
             this.newElement.classList.add(this.name);
@@ -61,8 +73,16 @@ export class CoreIconComponent implements OnInit, OnDestroy {
                 this.newElement.classList.add('fa-' + this.color);
             }
         } else {
-            this.newElement = <HTMLElement> this.element.firstElementChild;
+            const mode = this.config.get('iconMode');
+            this.newElement.classList.add('icon');
+            this.newElement.classList.add('icon-' + mode);
+            this.newElement.classList.add('ion-' + mode + '-' + this.name);
         }
+
+        !this.ariaLabel && this.newElement.setAttribute('aria-hidden', 'true');
+        !this.ariaLabel && this.newElement.setAttribute('role', 'presentation');
+        this.ariaLabel && this.newElement.setAttribute('aria-label', this.ariaLabel);
+        this.ariaLabel && this.newElement.setAttribute('title', this.ariaLabel);
 
         const attrs = this.element.attributes;
         for (let i = attrs.length - 1; i >= 0; i--) {
@@ -82,14 +102,18 @@ export class CoreIconComponent implements OnInit, OnDestroy {
             }
         }
 
-        this.element.parentElement.replaceChild(this.newElement, this.element);
+        if (this.slash) {
+            this.newElement.classList.add('icon-slash');
+        }
+
+        oldElement.parentElement.replaceChild(this.newElement, oldElement);
     }
 
     /**
      * Check if the value is true or on.
      *
-     * @param  {any}     val value to be checked.
-     * @return {boolean}     If has a value equivalent to true.
+     * @param val value to be checked.
+     * @return If has a value equivalent to true.
      */
     isTrueProperty(val: any): boolean {
         if (typeof val === 'string') {

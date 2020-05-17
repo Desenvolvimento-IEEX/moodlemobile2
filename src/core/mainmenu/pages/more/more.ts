@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ import { CoreEventsProvider } from '@providers/events';
 import { CoreSitesProvider } from '@providers/sites';
 import { CoreMainMenuDelegate, CoreMainMenuHandlerData } from '../../providers/delegate';
 import { CoreMainMenuProvider, CoreMainMenuCustomItem } from '../../providers/mainmenu';
+import { CoreLoginHelperProvider } from '@core/login/providers/helper';
 
 /**
  * Page that displays the list of main menu options that aren't in the tabs.
@@ -29,13 +30,16 @@ import { CoreMainMenuProvider, CoreMainMenuCustomItem } from '../../providers/ma
 })
 export class CoreMainMenuMorePage implements OnDestroy {
     handlers: CoreMainMenuHandlerData[];
+    allHandlers: CoreMainMenuHandlerData[];
     handlersLoaded: boolean;
     siteInfo: any;
+    siteName: string;
     logoutLabel: string;
     showWeb: boolean;
     showHelp: boolean;
     docsUrl: string;
     customItems: CoreMainMenuCustomItem[];
+    siteUrl: string;
 
     protected subscription;
     protected langObserver;
@@ -43,7 +47,7 @@ export class CoreMainMenuMorePage implements OnDestroy {
 
     constructor(private menuDelegate: CoreMainMenuDelegate, private sitesProvider: CoreSitesProvider,
             private navCtrl: NavController, private mainMenuProvider: CoreMainMenuProvider,
-            eventsProvider: CoreEventsProvider) {
+            eventsProvider: CoreEventsProvider, private loginHelper: CoreLoginHelperProvider) {
 
         this.langObserver = eventsProvider.on(CoreEventsProvider.LANGUAGE_CHANGED, this.loadSiteInfo.bind(this));
         this.updateSiteObserver = eventsProvider.on(CoreEventsProvider.SITE_UPDATED, this.loadSiteInfo.bind(this),
@@ -57,29 +61,43 @@ export class CoreMainMenuMorePage implements OnDestroy {
     ionViewDidLoad(): void {
         // Load the handlers.
         this.subscription = this.menuDelegate.getHandlers().subscribe((handlers) => {
-            // Calculate the main handlers to not display them in this view.
-            const mainHandlers = handlers.filter((handler) => {
-                return !handler.onlyInMore;
-            }).slice(0, CoreMainMenuProvider.NUM_MAIN_HANDLERS);
+            this.allHandlers = handlers;
 
-            // Get only the handlers that don't appear in the main view.
-            this.handlers = [];
-            handlers.forEach((handler) => {
-                if (mainHandlers.indexOf(handler) == -1) {
-                    this.handlers.push(handler);
-                }
-            });
-
-            this.handlersLoaded = this.menuDelegate.areHandlersLoaded();
+            this.initHandlers();
         });
+
+        window.addEventListener('resize', this.initHandlers.bind(this));
     }
 
     /**
      * Page destroyed.
      */
     ngOnDestroy(): void {
+        window.removeEventListener('resize', this.initHandlers.bind(this));
+        this.langObserver && this.langObserver.off();
+        this.updateSiteObserver && this.updateSiteObserver.off();
+
         if (this.subscription) {
             this.subscription.unsubscribe();
+        }
+    }
+
+    /**
+     * Init handlers on change (size or handlers).
+     */
+    initHandlers(): void {
+        if (this.allHandlers) {
+            // Calculate the main handlers not to display them in this view.
+            const mainHandlers = this.allHandlers.filter((handler) => {
+                return !handler.onlyInMore;
+            }).slice(0, this.mainMenuProvider.getNumItems());
+
+            // Get only the handlers that don't appear in the main view.
+            this.handlers = this.allHandlers.filter((handler) => {
+                return mainHandlers.indexOf(handler) == -1;
+            });
+
+            this.handlersLoaded = this.menuDelegate.areHandlersLoaded();
         }
     }
 
@@ -87,11 +105,12 @@ export class CoreMainMenuMorePage implements OnDestroy {
      * Load the site info required by the view.
      */
     protected loadSiteInfo(): void {
-        const currentSite = this.sitesProvider.getCurrentSite(),
-            config = currentSite.getStoredConfig();
+        const currentSite = this.sitesProvider.getCurrentSite();
 
         this.siteInfo = currentSite.getInfo();
-        this.logoutLabel = 'core.mainmenu.' + (config && config.tool_mobile_forcelogout == '1' ? 'logout' : 'changesite');
+        this.siteName = currentSite.getSiteName();
+        this.siteUrl = currentSite.getURL();
+        this.logoutLabel = this.loginHelper.getLogoutLabel(currentSite);
         this.showWeb = !currentSite.isFeatureDisabled('CoreMainMenuDelegate_website');
         this.showHelp = !currentSite.isFeatureDisabled('CoreMainMenuDelegate_help');
 
@@ -107,7 +126,7 @@ export class CoreMainMenuMorePage implements OnDestroy {
     /**
      * Open a handler.
      *
-     * @param {CoreMainMenuHandlerData} handler Handler to open.
+     * @param handler Handler to open.
      */
     openHandler(handler: CoreMainMenuHandlerData): void {
         this.navCtrl.push(handler.page, handler.pageParams);
@@ -116,17 +135,24 @@ export class CoreMainMenuMorePage implements OnDestroy {
     /**
      * Open an embedded custom item.
      *
-     * @param {CoreMainMenuCustomItem} item Item to open.
+     * @param item Item to open.
      */
     openItem(item: CoreMainMenuCustomItem): void {
         this.navCtrl.push('CoreViewerIframePage', {title: item.label, url: item.url});
     }
 
     /**
-     * Open settings page.
+     * Open app settings page.
      */
-    openSettings(): void {
-        this.navCtrl.push('CoreSettingsListPage');
+    openAppSettings(): void {
+        this.navCtrl.push('CoreAppSettingsPage');
+    }
+
+    /**
+     * Open site settings page.
+     */
+    openSitePreferences(): void {
+        this.navCtrl.push('CoreSitePreferencesPage');
     }
 
     /**

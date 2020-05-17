@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,11 +16,13 @@ import { Injectable, NgZone } from '@angular/core';
 import { Platform, App, NavController, MenuController } from 'ionic-angular';
 import { Keyboard } from '@ionic-native/keyboard';
 import { Network } from '@ionic-native/network';
+import { StatusBar } from '@ionic-native/status-bar';
 
 import { CoreDbProvider } from './db';
 import { CoreLoggerProvider } from './logger';
 import { CoreEventsProvider } from './events';
-import { SQLiteDB } from '@classes/sqlitedb';
+import { SQLiteDB, SQLiteDBTableSchema } from '@classes/sqlitedb';
+import { CoreConfigConstants } from '../configconstants';
 
 /**
  * Data stored for a redirect to another page/site.
@@ -28,27 +30,54 @@ import { SQLiteDB } from '@classes/sqlitedb';
 export interface CoreRedirectData {
     /**
      * ID of the site to load.
-     * @type {string}
      */
     siteId?: string;
 
     /**
      * Name of the page to redirect to.
-     * @type {string}
      */
     page?: string;
 
     /**
      * Params to pass to the page.
-     * @type {any}
      */
     params?: any;
 
     /**
      * Timestamp when this redirect was last modified.
-     * @type {number}
      */
     timemodified?: number;
+}
+
+/**
+ * App DB schema and migration function.
+ */
+export interface CoreAppSchema {
+    /**
+     * Name of the schema.
+     */
+    name: string;
+
+    /**
+     * Latest version of the schema (integer greater than 0).
+     */
+    version: number;
+
+    /**
+     * Tables to create when installing or upgrading the schema.
+     */
+    tables?: SQLiteDBTableSchema[];
+
+    /**
+     * Migrates the schema to the latest version.
+     *
+     * Called when installing and upgrading the schema, after creating the defined tables.
+     *
+     * @param db The affected DB.
+     * @param oldVersion Old version of the schema or 0 if not installed.
+     * @return Promise resolved when done.
+     */
+    migrate?(db: SQLiteDB, oldVersion: number): Promise<any>;
 }
 
 /**
@@ -69,12 +98,36 @@ export class CoreAppProvider {
     protected ssoAuthenticationPromise: Promise<any>;
     protected isKeyboardShown = false;
     protected backActions = [];
+    protected mainMenuId = 0;
+    protected mainMenuOpen: number;
+    protected forceOffline = false;
+
+    // Variables for DB.
+    protected createVersionsTableReady: Promise<any>;
+    protected SCHEMA_VERSIONS_TABLE = 'schema_versions';
+    protected versionsTableSchema: SQLiteDBTableSchema = {
+        name: this.SCHEMA_VERSIONS_TABLE,
+        columns: [
+            {
+                name: 'name',
+                type: 'TEXT',
+                primaryKey: true,
+            },
+            {
+                name: 'version',
+                type: 'INTEGER',
+            },
+        ],
+    };
 
     constructor(dbProvider: CoreDbProvider, private platform: Platform, private keyboard: Keyboard, private appCtrl: App,
-            private network: Network, logger: CoreLoggerProvider, events: CoreEventsProvider, zone: NgZone,
-            private menuCtrl: MenuController) {
+            private network: Network, logger: CoreLoggerProvider, private events: CoreEventsProvider, zone: NgZone,
+            private menuCtrl: MenuController, private statusBar: StatusBar) {
         this.logger = logger.getInstance('CoreAppProvider');
         this.db = dbProvider.getDB(this.DBNAME);
+
+        // Create the schema versions table.
+        this.createVersionsTableReady = this.db.createTableFromSchema(this.versionsTableSchema);
 
         this.keyboard.onKeyboardShow().subscribe((data) => {
             // Execute the callback in the Angular zone, so change detection doesn't stop working.
@@ -98,12 +151,17 @@ export class CoreAppProvider {
         this.platform.registerBackButtonAction(() => {
             this.backButtonAction();
         }, 100);
+
+        // Export the app provider so Behat tests can change the forceOffline flag.
+        if (CoreAppProvider.isAutomated()) {
+            (<any> window).appProvider = this;
+        }
     }
 
     /**
      * Check if the browser supports mediaDevices.getUserMedia.
      *
-     * @return {boolean} Whether the function is supported.
+     * @return Whether the function is supported.
      */
     canGetUserMedia(): boolean {
         return !!(navigator && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
@@ -112,7 +170,7 @@ export class CoreAppProvider {
     /**
      * Check if the browser supports MediaRecorder.
      *
-     * @return {boolean} Whether the function is supported.
+     * @return Whether the function is supported.
      */
     canRecordMedia(): boolean {
         return !!(<any> window).MediaRecorder;
@@ -128,18 +186,68 @@ export class CoreAppProvider {
     }
 
     /**
+     * Install and upgrade a certain schema.
+     *
+     * @param schema The schema to create.
+     * @return Promise resolved when done.
+     */
+    async createTablesFromSchema(schema: CoreAppSchema): Promise<any> {
+        this.logger.debug(`Apply schema to app DB: ${schema.name}`);
+
+        let oldVersion;
+
+        try {
+            // Wait for the schema versions table to be created.
+            await this.createVersionsTableReady;
+
+            // Fetch installed version of the schema.
+            const entry = await this.db.getRecord(this.SCHEMA_VERSIONS_TABLE, {name: schema.name});
+            oldVersion = entry.version;
+        } catch (error) {
+            // No installed version yet.
+            oldVersion = 0;
+        }
+
+        if (oldVersion >= schema.version) {
+            // Version already installed, nothing else to do.
+            return;
+        }
+
+        this.logger.debug(`Migrating schema '${schema.name}' of app DB from version ${oldVersion} to ${schema.version}`);
+
+        if (schema.tables) {
+            await this.db.createTablesFromSchema(schema.tables);
+        }
+        if (schema.migrate) {
+            await schema.migrate(this.db, oldVersion);
+        }
+
+        // Set installed version.
+        await this.db.insertRecord(this.SCHEMA_VERSIONS_TABLE, {name: schema.name, version: schema.version});
+    }
+
+    /**
      * Get the application global database.
      *
-     * @return {SQLiteDB} App's DB.
+     * @return App's DB.
      */
     getDB(): SQLiteDB {
         return this.db;
     }
 
     /**
+     * Get an ID for a main menu.
+     *
+     * @return Main menu ID.
+     */
+    getMainMenuId(): number {
+        return this.mainMenuId++;
+    }
+
+    /**
      * Get the app's root NavController.
      *
-     * @return {NavController} Root NavController.
+     * @return Root NavController.
      */
     getRootNavController(): NavController {
         // Function getRootNav is deprecated. Get the first root nav, there should always be one.
@@ -147,9 +255,18 @@ export class CoreAppProvider {
     }
 
     /**
+     * Returns whether the user agent is controlled by automation. I.e. Behat testing.
+     *
+     * @return True if the user agent is controlled by automation, false otherwise.
+     */
+    static isAutomated(): boolean {
+        return !!navigator.webdriver;
+    }
+
+    /**
      * Checks if the app is running in a 64 bits desktop environment (not browser).
      *
-     * @return {boolean} Whether the app is running in a 64 bits desktop environment (not browser).
+     * @return Whether the app is running in a 64 bits desktop environment (not browser).
      */
     is64Bits(): boolean {
         const process = (<any> window).process;
@@ -158,9 +275,18 @@ export class CoreAppProvider {
     }
 
     /**
+     * Checks if the app is running in an Android mobile or tablet device.
+     *
+     * @return Whether the app is running in an Android mobile or tablet device.
+     */
+    isAndroid(): boolean {
+        return this.platform.is('android');
+    }
+
+    /**
      * Checks if the app is running in a desktop environment (not browser).
      *
-     * @return {boolean} Whether the app is running in a desktop environment (not browser).
+     * @return Whether the app is running in a desktop environment (not browser).
      */
     isDesktop(): boolean {
         const process = (<any> window).process;
@@ -169,9 +295,18 @@ export class CoreAppProvider {
     }
 
     /**
+     * Checks if the app is running in an iOS mobile or tablet device.
+     *
+     * @return Whether the app is running in an iOS mobile or tablet device.
+     */
+    isIOS(): boolean {
+        return this.platform.is('ios');
+    }
+
+    /**
      * Check if the keyboard is visible.
      *
-     * @return {boolean} Whether keyboard is visible.
+     * @return Whether keyboard is visible.
      */
     isKeyboardVisible(): boolean {
         return this.isKeyboardShown;
@@ -180,7 +315,7 @@ export class CoreAppProvider {
     /**
      * Check if the app is running in a Linux environment.
      *
-     * @return {boolean} Whether it's running in a Linux environment.
+     * @return Whether it's running in a Linux environment.
      */
     isLinux(): boolean {
         if (!this.isDesktop()) {
@@ -197,7 +332,7 @@ export class CoreAppProvider {
     /**
      * Check if the app is running in a Mac OS environment.
      *
-     * @return {boolean} Whether it's running in a Mac OS environment.
+     * @return Whether it's running in a Mac OS environment.
      */
     isMac(): boolean {
         if (!this.isDesktop()) {
@@ -212,9 +347,18 @@ export class CoreAppProvider {
     }
 
     /**
+     * Check if the main menu is open.
+     *
+     * @return Whether the main menu is open.
+     */
+    isMainMenuOpen(): boolean {
+        return typeof this.mainMenuOpen != 'undefined';
+    }
+
+    /**
      * Checks if the app is running in a mobile or tablet device (Cordova).
      *
-     * @return {boolean} Whether the app is running in a mobile or tablet device.
+     * @return Whether the app is running in a mobile or tablet device.
      */
     isMobile(): boolean {
         return this.platform.is('cordova');
@@ -223,7 +367,7 @@ export class CoreAppProvider {
     /**
      * Checks if the current window is wider than a mobile.
      *
-     * @return {boolean} Whether the app the current window is wider than a mobile.
+     * @return Whether the app the current window is wider than a mobile.
      */
     isWide(): boolean {
         return this.platform.width() > 768;
@@ -232,9 +376,13 @@ export class CoreAppProvider {
     /**
      * Returns whether we are online.
      *
-     * @return {boolean} Whether the app is online.
+     * @return Whether the app is online.
      */
     isOnline(): boolean {
+        if (this.forceOffline) {
+            return false;
+        }
+
         let online = this.network.type !== null && this.network.type != Connection.NONE && this.network.type != Connection.UNKNOWN;
         // Double check we are not online because we cannot rely 100% in Cordova APIs. Also, check it in browser.
         if (!online && navigator.onLine) {
@@ -247,7 +395,7 @@ export class CoreAppProvider {
     /**
      * Check if device uses a limited connection.
      *
-     * @return {boolean} Whether the device uses a limited connection.
+     * @return Whether the device uses a limited connection.
      */
     isNetworkAccessLimited(): boolean {
         const type = this.network.type;
@@ -264,7 +412,7 @@ export class CoreAppProvider {
     /**
      * Check if device uses a wifi connection.
      *
-     * @return {boolean} Whether the device uses a wifi connection.
+     * @return Whether the device uses a wifi connection.
      */
     isWifi(): boolean {
         return this.isOnline() && !this.isNetworkAccessLimited();
@@ -273,7 +421,7 @@ export class CoreAppProvider {
     /**
      * Check if the app is running in a Windows environment.
      *
-     * @return {boolean} Whether it's running in a Windows environment.
+     * @return Whether it's running in a Windows environment.
      */
     isWindows(): boolean {
         if (!this.isDesktop()) {
@@ -294,6 +442,21 @@ export class CoreAppProvider {
         // Open keyboard is not supported in desktop and in iOS.
         if (this.isMobile() && !this.platform.is('ios')) {
             this.keyboard.show();
+        }
+    }
+
+    /**
+     * Set a main menu as open or not.
+     *
+     * @param id Main menu ID.
+     * @param open Whether it's open or not.
+     */
+    setMainMenuOpen(id: number, open: boolean): void {
+        if (open) {
+            this.mainMenuOpen = id;
+            this.events.trigger(CoreEventsProvider.MAIN_MENU_OPEN);
+        } else if (this.mainMenuOpen == id) {
+            delete this.mainMenuOpen;
         }
     }
 
@@ -337,7 +500,7 @@ export class CoreAppProvider {
     /**
      * Check if there's an ongoing SSO authentication process.
      *
-     * @return {boolean} Whether there's a SSO authentication ongoing.
+     * @return Whether there's a SSO authentication ongoing.
      */
     isSSOAuthenticationOngoing(): boolean {
         return !!this.ssoAuthenticationPromise;
@@ -346,7 +509,7 @@ export class CoreAppProvider {
     /**
      * Returns a promise that will be resolved once SSO authentication finishes.
      *
-     * @return {Promise<any>} Promise resolved once SSO authentication finishes.
+     * @return Promise resolved once SSO authentication finishes.
      */
     waitForSSOAuthentication(): Promise<any> {
         return this.ssoAuthenticationPromise || Promise.resolve();
@@ -355,7 +518,7 @@ export class CoreAppProvider {
     /**
      * Retrieve redirect data.
      *
-     * @return {CoreRedirectData} Object with siteid, state, params and timemodified.
+     * @return Object with siteid, state, params and timemodified.
      */
     getRedirect(): CoreRedirectData {
         if (localStorage && localStorage.getItem) {
@@ -383,9 +546,9 @@ export class CoreAppProvider {
     /**
      * Store redirect params.
      *
-     * @param {string} siteId Site ID.
-     * @param {string} page Page to go.
-     * @param {any} params Page params.
+     * @param siteId Site ID.
+     * @param page Page to go.
+     * @param params Page params.
      */
     storeRedirect(siteId: string, page: string, params: any): void {
         if (localStorage && localStorage.setItem) {
@@ -466,14 +629,14 @@ export class CoreAppProvider {
      * button is pressed. This method decides which of the registered back button
      * actions has the highest priority and should be called.
      *
-     * @param {Function} fn Called when the back button is pressed,
-     * if this registered action has the highest priority.
-     * @param {number} priority Set the priority for this action. All actions sorted by priority will be executed since one of
-     * them returns true.
-     *   * Priorities higher or equal than 1000 will go before closing modals
-     *   * Priorities lower than 500 will only be executed if you are in the first state of the app (before exit).
-     * @returns {Function} A function that, when called, will unregister
-     * the back button action.
+     * @param fn Called when the back button is pressed,
+     *           if this registered action has the highest priority.
+     * @param priority Set the priority for this action. All actions sorted by priority will be executed since one of
+     *                 them returns true.
+     *                 * Priorities higher or equal than 1000 will go before closing modals
+     *                 * Priorities lower than 500 will only be executed if you are in the first state of the app (before exit).
+     * @return A function that, when called, will unregister
+     *         the back button action.
      */
     registerBackButtonAction(fn: Function, priority: number = 0): Function {
         const action = { fn: fn, priority: priority };
@@ -489,5 +652,54 @@ export class CoreAppProvider {
 
             return index >= 0 && !!this.backActions.splice(index, 1);
         };
+    }
+
+    /**
+     * Set StatusBar color depending on platform.
+     */
+    setStatusBarColor(): void {
+        if (typeof CoreConfigConstants.statusbarbgios == 'string' && this.platform.is('ios')) {
+            // IOS Status bar properties.
+            this.statusBar.overlaysWebView(false);
+            this.statusBar.backgroundColorByHexString(CoreConfigConstants.statusbarbgios);
+            CoreConfigConstants.statusbarlighttextios ? this.statusBar.styleLightContent() : this.statusBar.styleDefault();
+        } else if (typeof CoreConfigConstants.statusbarbgandroid == 'string' && this.platform.is('android')) {
+            // Android Status bar properties.
+            this.statusBar.backgroundColorByHexString(CoreConfigConstants.statusbarbgandroid);
+            CoreConfigConstants.statusbarlighttextandroid ? this.statusBar.styleLightContent() : this.statusBar.styleDefault();
+        } else if (typeof CoreConfigConstants.statusbarbg == 'string') {
+            // Generic Status bar properties.
+            this.platform.is('ios') && this.statusBar.overlaysWebView(false);
+            this.statusBar.backgroundColorByHexString(CoreConfigConstants.statusbarbg);
+            CoreConfigConstants.statusbarlighttext ? this.statusBar.styleLightContent() : this.statusBar.styleDefault();
+        } else {
+            // Default Status bar properties.
+            this.platform.is('android') ? this.statusBar.styleLightContent() : this.statusBar.styleDefault();
+        }
+    }
+
+    /**
+     * Reset StatusBar color if any was set.
+     */
+    resetStatusBarColor(): void {
+        if (typeof CoreConfigConstants.statusbarbgremotetheme == 'string' &&
+                ((typeof CoreConfigConstants.statusbarbgios == 'string' && this.platform.is('ios')) ||
+                (typeof CoreConfigConstants.statusbarbgandroid == 'string' && this.platform.is('android')) ||
+                typeof CoreConfigConstants.statusbarbg == 'string')) {
+            // If the status bar has been overriden and there's a fallback color for remote themes, use it now.
+            this.platform.is('ios') && this.statusBar.overlaysWebView(false);
+            this.statusBar.backgroundColorByHexString(CoreConfigConstants.statusbarbgremotetheme);
+            CoreConfigConstants.statusbarlighttextremotetheme ?
+                this.statusBar.styleLightContent() : this.statusBar.styleDefault();
+        }
+    }
+
+    /**
+     * Set value of forceOffline flag. If true, the app will think the device is offline.
+     *
+     * @param value Value to set.
+     */
+    setForceOffline(value: boolean): void {
+        this.forceOffline = !!value;
     }
 }

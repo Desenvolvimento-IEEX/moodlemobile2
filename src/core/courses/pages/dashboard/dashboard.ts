@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import { CoreSiteHomeProvider } from '@core/sitehome/providers/sitehome';
 import { CoreSiteHomeIndexComponent } from '@core/sitehome/components/index/index';
 import { CoreCoursesProvider } from '../../providers/courses';
 import { CoreCoursesDashboardProvider } from '../../providers/dashboard';
+import { CoreCoursesMyCoursesComponent } from '../../components/my-courses/my-courses';
 
 /**
  * Page that displays the dashboard.
@@ -37,6 +38,7 @@ export class CoreCoursesDashboardPage implements OnDestroy {
     @ViewChild(CoreTabsComponent) tabsComponent: CoreTabsComponent;
     @ViewChild(CoreSiteHomeIndexComponent) siteHomeComponent: CoreSiteHomeIndexComponent;
     @ViewChildren(CoreBlockComponent) blocksComponents: QueryList<CoreBlockComponent>;
+    @ViewChild(CoreCoursesMyCoursesComponent) mcComponent: CoreCoursesMyCoursesComponent;
 
     firstSelectedTab: number;
     siteHomeEnabled = false;
@@ -131,17 +133,17 @@ export class CoreCoursesDashboardPage implements OnDestroy {
      * Load the site name.
      */
     protected loadSiteName(): void {
-        this.siteName = this.sitesProvider.getCurrentSite().getInfo().sitename;
+        this.siteName = this.sitesProvider.getCurrentSite().getSiteName();
     }
 
     /**
      * Convenience function to fetch the dashboard data.
      *
-     * @return {Promise<any>} Promise resolved when done.
+     * @return Promise resolved when done.
      */
     protected loadDashboardContent(): Promise<any> {
-        return this.dashboardProvider.isAvailable().then((enabled) => {
-            if (enabled) {
+        return this.dashboardProvider.isAvailable().then((available) => {
+            if (available) {
                 this.userId = this.sitesProvider.getCurrentSiteUserId();
 
                 return this.dashboardProvider.getDashboardBlocks().then((blocks) => {
@@ -152,10 +154,14 @@ export class CoreCoursesDashboardPage implements OnDestroy {
                     // Cannot get the blocks, just show dashboard if needed.
                     this.loadFallbackBlocks();
                 });
+            } else if (!this.dashboardProvider.isDisabledInSite()) {
+                // Not available, but not disabled either. Use fallback.
+                this.loadFallbackBlocks();
+            } else {
+                // Disabled.
+                this.blocks = [];
             }
 
-            // Not enabled, check separated tabs.
-            this.loadFallbackBlocks();
         }).finally(() => {
             this.dashboardEnabled = this.blockDelegate.hasSupportedBlock(this.blocks);
             this.dashboardLoaded = true;
@@ -165,7 +171,7 @@ export class CoreCoursesDashboardPage implements OnDestroy {
     /**
      * Refresh the dashboard data.
      *
-     * @param {any} refresher Refresher.
+     * @param refresher Refresher.
      */
     refreshDashboard(refresher: any): void {
         const promises = [];
@@ -187,6 +193,26 @@ export class CoreCoursesDashboardPage implements OnDestroy {
     }
 
     /**
+     * Refresh the dashboard data and My Courses.
+     *
+     * @param refresher Refresher.
+     */
+    refreshMyCourses(refresher: any): void {
+        // First of all, refresh dashboard blocks, maybe a new block was added and now we can display the dashboard.
+        this.dashboardProvider.invalidateDashboardBlocks().finally(() => {
+            return this.loadDashboardContent();
+        }).finally(() => {
+            if (!this.dashboardEnabled) {
+                // Dashboard still not enabled. Refresh my courses.
+                this.mcComponent && this.mcComponent.refreshCourses(refresher);
+            } else {
+                this.tabsComponent.selectTab(1);
+                refresher.complete();
+            }
+        });
+    }
+
+    /**
      * Toggle download enabled.
      */
     toggleDownload(): void {
@@ -196,7 +222,7 @@ export class CoreCoursesDashboardPage implements OnDestroy {
     /**
      * Convenience function to switch download enabled.
      *
-     * @param {boolean} enable If enable or disable.
+     * @param enable If enable or disable.
      */
     protected switchDownload(enable: boolean): void {
         this.downloadEnabled = (this.downloadCourseEnabled || this.downloadCoursesEnabled) && enable;
@@ -210,10 +236,12 @@ export class CoreCoursesDashboardPage implements OnDestroy {
     protected loadFallbackBlocks(): void {
         this.blocks = [
             {
-                name: 'myoverview'
+                name: 'myoverview',
+                visible: true
             },
             {
-                name: 'timeline'
+                name: 'timeline',
+                visible: true
             }
         ];
     }

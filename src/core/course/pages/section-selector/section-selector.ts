@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,13 +30,17 @@ export class CoreCourseSectionSelectorPage {
     stealthModulesSectionId = CoreCourseProvider.STEALTH_MODULES_SECTION_ID;
     sections: any;
     selected: number;
+    courseId: number;
 
     constructor(navParams: NavParams, courseHelper: CoreCourseHelperProvider, private viewCtrl: ViewController) {
         this.sections = navParams.get('sections');
         this.selected = navParams.get('selected');
         const course = navParams.get('course');
 
-        if (course && course.enablecompletion && course.courseformatoptions && course.courseformatoptions.coursedisplay == 1) {
+        this.courseId = course && course.id;
+
+        if (course && course.enablecompletion && course.courseformatoptions && course.courseformatoptions.coursedisplay == 1 &&
+                course.completionusertracked !== false) {
             this.sections.forEach((section) => {
                 let complete = 0,
                     total = 0;
@@ -68,7 +72,7 @@ export class CoreCourseSectionSelectorPage {
     /**
      * Select a section.
      *
-     * @param {any} section Selected section object.
+     * @param section Selected section object.
      */
     selectSection(section: any): void {
         if (section.uservisible !== false) {

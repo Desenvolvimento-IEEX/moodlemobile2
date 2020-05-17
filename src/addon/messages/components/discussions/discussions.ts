@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import { AddonMessagesProvider } from '../../providers/messages';
 import { CoreDomUtilsProvider } from '@providers/utils/dom';
 import { CoreUtilsProvider } from '@providers/utils/utils';
 import { CoreAppProvider } from '@providers/app';
-import { AddonPushNotificationsDelegate } from '@addon/pushnotifications/providers/delegate';
+import { CorePushNotificationsDelegate } from '@core/pushnotifications/providers/delegate';
 
 /**
  * Component that displays the list of discussions.
@@ -54,7 +54,7 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
     constructor(private eventsProvider: CoreEventsProvider, sitesProvider: CoreSitesProvider, translate: TranslateService,
             private messagesProvider: AddonMessagesProvider, private domUtils: CoreDomUtilsProvider, navParams: NavParams,
             private appProvider: CoreAppProvider, platform: Platform, private utils: CoreUtilsProvider,
-            pushNotificationsDelegate: AddonPushNotificationsDelegate) {
+            pushNotificationsDelegate: CorePushNotificationsDelegate) {
 
         this.search.loading =  translate.instant('core.searching');
         this.loadingMessages = translate.instant('core.loading');
@@ -62,7 +62,7 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
 
         // Update discussions when new message is received.
         this.newMessagesObserver = eventsProvider.on(AddonMessagesProvider.NEW_MESSAGE_EVENT, (data) => {
-            if (data.userId) {
+            if (data.userId && this.discussions) {
                 const discussion = this.discussions.find((disc) => {
                     return disc.message.user == data.userId;
                 });
@@ -82,7 +82,7 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
 
         // Update discussions when a message is read.
         this.readChangedObserver = eventsProvider.on(AddonMessagesProvider.READ_CHANGED_EVENT, (data) => {
-            if (data.userId) {
+            if (data.userId && this.discussions) {
                 const discussion = this.discussions.find((disc) => {
                     return disc.message.user == data.userId;
                 });
@@ -92,8 +92,8 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
                     discussion.unread = false;
 
                     // Conversations changed, invalidate them and refresh unread counts.
-                    this.messagesProvider.invalidateConversations();
-                    this.messagesProvider.refreshUnreadConversationCounts();
+                    this.messagesProvider.invalidateConversations(this.siteId);
+                    this.messagesProvider.refreshUnreadConversationCounts(this.siteId);
                 }
             }
         }, this.siteId);
@@ -139,16 +139,16 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
     /**
      * Refresh the data.
      *
-     * @param {any} [refresher] Refresher.
-     * @param {boolean} [refreshUnreadCounts=true] Whteher to refresh unread counts.
-     * @return {Promise<any>} Promise resolved when done.
+     * @param refresher Refresher.
+     * @param refreshUnreadCounts Whteher to refresh unread counts.
+     * @return Promise resolved when done.
      */
     refreshData(refresher?: any, refreshUnreadCounts: boolean = true): Promise<any> {
         const promises = [];
-        promises.push(this.messagesProvider.invalidateDiscussionsCache());
+        promises.push(this.messagesProvider.invalidateDiscussionsCache(this.siteId));
 
         if (refreshUnreadCounts) {
-            promises.push(this.messagesProvider.invalidateUnreadConversationCounts());
+            promises.push(this.messagesProvider.invalidateUnreadConversationCounts(this.siteId));
         }
 
         return this.utils.allPromises(promises).finally(() => {
@@ -163,7 +163,7 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
     /**
      * Fetch discussions.
      *
-     * @return {Promise<any>} Promise resolved when done.
+     * @return Promise resolved when done.
      */
     protected fetchData(): Promise<any> {
         this.loadingMessage = this.loadingMessages;
@@ -171,7 +171,7 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
 
         const promises = [];
 
-        promises.push(this.messagesProvider.getDiscussions().then((discussions) => {
+        promises.push(this.messagesProvider.getDiscussions(this.siteId).then((discussions) => {
             // Convert to an array for sorting.
             const discussionsSorted = [];
             for (const userId in discussions) {
@@ -184,7 +184,7 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
             });
         }));
 
-        promises.push(this.messagesProvider.getUnreadConversationCounts());
+        promises.push(this.messagesProvider.getUnreadConversationCounts(this.siteId));
 
         return Promise.all(promises).catch((error) => {
             this.domUtils.showErrorModalDefault(error, 'addon.messages.errorwhileretrievingdiscussions', true);
@@ -208,15 +208,15 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
     /**
      * Search messages cotaining text.
      *
-     * @param  {string}       query Text to search for.
-     * @return {Promise<any>}       Resolved when done.
+     * @param query Text to search for.
+     * @return Resolved when done.
      */
     searchMessage(query: string): Promise<any> {
         this.appProvider.closeKeyboard();
         this.loaded = false;
         this.loadingMessage = this.search.loading;
 
-        return this.messagesProvider.searchMessages(query).then((searchResults) => {
+        return this.messagesProvider.searchMessages(query, undefined, undefined, undefined, this.siteId).then((searchResults) => {
             this.search.showResults = true;
             this.search.results = searchResults.messages;
         }).catch((error) => {
@@ -229,9 +229,9 @@ export class AddonMessagesDiscussionsComponent implements OnDestroy {
     /**
      * Navigate to a particular discussion.
      *
-     * @param {number} discussionUserId Discussion Id to load.
-     * @param {number} [messageId]      Message to scroll after loading the discussion. Used when searching.
-     * @param {boolean} [onlyWithSplitView=false]  Only go to Discussion if split view is on.
+     * @param discussionUserId Discussion Id to load.
+     * @param messageId Message to scroll after loading the discussion. Used when searching.
+     * @param onlyWithSplitView Only go to Discussion if split view is on.
      */
     gotoDiscussion(discussionUserId: number, messageId?: number, onlyWithSplitView: boolean = false): void {
         this.discussionUserId = discussionUserId;

@@ -1,5 +1,6 @@
 ion-avatar[core-user-avatar] {
     position: relative;
+    cursor: pointer;
 
     .contact-status {
         position: absolute;
@@ -11,6 +12,16 @@ ion-avatar[core-user-avatar] {
             border: 1px solid white;
             background-color: $core-online-color;
         }
+    }
+
+    .core-avatar-extra-icon {
+        margin: 0 !important;
+        border-radius: 0 !important;
+        background: none;
+        position: absolute;
+        @include position(null, -4px, -4px, null);
+        width: 24px;
+        height: 24px;
     }
 }
 

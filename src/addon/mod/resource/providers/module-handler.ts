@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import { CoreTextUtilsProvider } from '@providers/utils/text';
 import { CoreTimeUtilsProvider } from '@providers/utils/time';
 import { CoreCourseModulePrefetchDelegate } from '@core/course/providers/module-prefetch-delegate';
 import { CoreConstants } from '@core/constants';
+import { CoreWSExternalFile } from '@providers/ws';
 
 /**
  * Handler to support resource modules.
@@ -57,7 +58,7 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
     /**
      * Check if the handler is enabled on a site level.
      *
-     * @return {boolean|Promise<boolean>} Whether or not the handler is enabled on a site level.
+     * @return Whether or not the handler is enabled on a site level.
      */
     isEnabled(): boolean | Promise<boolean> {
         return this.resourceProvider.isPluginEnabled();
@@ -66,10 +67,10 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
     /**
      * Get the data required to display the module in the course contents view.
      *
-     * @param {any} module The module object.
-     * @param {number} courseId The course ID.
-     * @param {number} sectionId The section ID.
-     * @return {CoreCourseModuleHandlerData} Data to render the module.
+     * @param module The module object.
+     * @param courseId The course ID.
+     * @param sectionId The section ID.
+     * @return Data to render the module.
      */
     getData(module: any, courseId: number, sectionId: number): CoreCourseModuleHandlerData {
         const updateStatus = (status: string): void => {
@@ -82,8 +83,12 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
             title: module.name,
             class: 'addon-mod_resource-handler',
             showDownloadButton: true,
-            action(event: Event, navCtrl: NavController, module: any, courseId: number, options: NavOptions): void {
-                navCtrl.push('AddonModResourceIndexPage', {module: module, courseId: courseId}, options);
+            action(event: Event, navCtrl: NavController, module: any, courseId: number, options: NavOptions, params?: any): void {
+                const pageParams = {module: module, courseId: courseId};
+                if (params) {
+                    Object.assign(pageParams, params);
+                }
+                navCtrl.push('AddonModResourceIndexPage', pageParams, options);
             },
             updateStatus: updateStatus.bind(this),
             buttons: [ {
@@ -112,13 +117,21 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
     /**
      * Returns if contents are loaded to show open button.
      *
-     * @param {any} module The module object.
-     * @param {number} courseId The course ID.
-     * @return {Promise<boolean>} Resolved when done.
+     * @param module The module object.
+     * @param courseId The course ID.
+     * @return Resolved when done.
      */
     protected hideOpenButton(module: any, courseId: number): Promise<boolean> {
-        return this.courseProvider.loadModuleContents(module, courseId, undefined, false, false, undefined, this.modName)
-                .then(() => {
+        let promise;
+
+        if (module.contentsinfo) {
+            // No need to load contents.
+            promise = Promise.resolve();
+        } else {
+            promise = this.courseProvider.loadModuleContents(module, courseId, undefined, false, false, undefined, this.modName);
+        }
+
+        return promise.then(() => {
             return this.prefetchDelegate.getModuleStatus(module, courseId).then((status) => {
                 return status !== CoreConstants.DOWNLOADED || this.resourceHelper.isDisplayedInIframe(module);
             });
@@ -128,16 +141,16 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
     /**
      * Returns the activity icon and data.
      *
-     * @param {any} module        The module object.
-     * @param {number} courseId   The course ID.
-     * @return {Promise<any>}     Resource data.
+     * @param module The module object.
+     * @param courseId The course ID.
+     * @return Resource data.
      */
     protected getResourceData(module: any, courseId: number, handlerData: CoreCourseModuleHandlerData): Promise<any> {
         const promises = [];
-        let infoFiles = [],
+        let infoFiles: CoreWSExternalFile[] = [],
             options: any = {};
 
-        // Check if the button needs to be shown or not. This also loads the module contents.
+        // Check if the button needs to be shown or not.
         promises.push(this.hideOpenButton(module, courseId).then((hideOpenButton) => {
             handlerData.buttons[0].hidden = hideOpenButton;
         }));
@@ -160,7 +173,15 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
                 },
                 extra = [];
 
-            if (files && files.length) {
+            if (module.contentsinfo) {
+                // No need to use the list of files.
+                const mimetype = module.contentsinfo.mimetypes[0];
+                if (mimetype) {
+                    resourceData.icon = this.mimetypeUtils.getMimetypeIcon(mimetype);
+                }
+                resourceData.extra = this.textUtils.cleanTags(module.afterlink);
+
+            } else if (files && files.length) {
                 const file = files[0];
 
                 resourceData.icon = this.mimetypeUtils.getFileIcon(file.filename);
@@ -174,11 +195,12 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
                             return result + file.filesize;
                         }, 0);
                     }
+
                     extra.push(this.textUtils.bytesToSize(size, 1));
                 }
 
                 if (options.showtype) {
-                    // We should take it from options.filedetails.size if avalaible ∫but it's already translated.
+                    // We should take it from options.filedetails.size if avalaible but it's already translated.
                     extra.push(this.mimetypeUtils.getMimetypeDescription(file));
                 }
 
@@ -199,12 +221,14 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
                             {$a: this.timeUtils.userDate(file.timecreated * 1000, 'core.strftimedatetimeshort') }));
                     }
                 }
+
+                resourceData.extra += extra.join(' ');
             }
 
+            // No previously set, just set the icon.
             if (resourceData.icon == '') {
                 resourceData.icon = this.courseProvider.getModuleIconSrc(this.modName, module.modicon);
             }
-            resourceData.extra += extra.join(' ');
 
             return resourceData;
         });
@@ -214,9 +238,9 @@ export class AddonModResourceModuleHandler implements CoreCourseModuleHandler {
      * Get the component to render the module. This is needed to support singleactivity course format.
      * The component returned must implement CoreCourseModuleMainComponent.
      *
-     * @param {any} course The course object.
-     * @param {any} module The module object.
-     * @return {any} The component to use, undefined if not found.
+     * @param course The course object.
+     * @param module The module object.
+     * @return The component to use, undefined if not found.
      */
     getMainComponent(course: any, module: any): any {
         return AddonModResourceIndexComponent;

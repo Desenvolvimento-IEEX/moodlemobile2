@@ -20,6 +20,7 @@ addon-qtype-ddwtos {
         border: 1px solid $gray-darker;
         margin-bottom: 2px;
         border-radius: 5px;
+        cursor: pointer;
     }
     .draghome, .drag {
         display: inline-block;
@@ -40,10 +41,12 @@ addon-qtype-ddwtos {
     .drag {
         z-index: 2;
         border-radius: 5px;
+        line-height: 25px;
+        cursor: pointer;
     }
     .drag.selected {
         z-index: 3;
-        box-shadow: 3px 3px 4px $gray-darker;
+        box-shadow: $core-dd-question-selected-shadow;
     }
 
     .drop.selected {
@@ -68,34 +71,22 @@ addon-qtype-ddwtos {
 
     span.incorrect {
         background-color: $red-light;
+        @include darkmode() {
+            background-color: $red-dark;
+        }
     }
     span.correct {
         background-color: $green-light;
+        @include darkmode() {
+            background-color: $green-dark;
+        }
     }
 
-    .group1 {
-        background-color: $white;
-    }
-    .group2 {
-        background-color: #DCDCDC;
-    }
-    .group3 {
-        background-color: $blue-light;
-    }
-    .group4 {
-        background-color: #D8BFD8;
-    }
-    .group5 {
-        background-color: #87CEFA;
-    }
-    .group6 {
-        background-color: #DAA520;
-    }
-    .group7 {
-        background-color: #FFD700;
-    }
-    .group8 {
-        background-color: #F0E68C;
+    @for $i from 0 to length($core-dd-question-colors) {
+        .group#{$i + 1} {
+            background: nth($core-dd-question-colors, $i + 1);
+            color: $text-color;
+        }
     }
 
     sub, sup {
@@ -117,8 +108,4 @@ addon-qtype-ddwtos .item-md .draghome {
 
 addon-qtype-ddwtos .item-ios .draghome {
     max-width: calc(100% - #{($item-ios-padding-start)});
-}
-
-addon-qtype-ddwtos .item-wp .draghome {
-    max-width: calc(100% - #{($item-wp-padding-start)});
 }

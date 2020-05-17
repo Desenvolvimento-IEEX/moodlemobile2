@@ -4,13 +4,12 @@ $item-message-note-text: $gray-dark !default;
 $item-message-note-font-size: 75% !default;
 $item-message-mine-bg: $gray-light !default;
 
-ion-app.app-root page-addon-messages-discussion {
-    .toolbar-title {
-        padding: 0;
-    }
-
+@mixin message-page {
     ion-content {
         background-color: $gray-lighter !important;
+        @include darkmode() {
+            background-color: $gray-darker !important;
+        }
     }
 
     .addon-messages-discussion-container {
@@ -35,7 +34,7 @@ ion-app.app-root page-addon-messages-discussion {
     }
 
     // Message item.
-    .addon-message {
+    .item.item-block.addon-message {
         border: 0;
         border-radius: 4px;
         padding: 8px;
@@ -47,6 +46,8 @@ ion-app.app-root page-addon-messages-discussion {
         min-height: 0;
         position: relative;
         @include core-transition(width);
+        // This is needed to display bubble tails.
+        overflow: visible;
 
         core-format-text > p:only-child {
             display: inline;
@@ -58,8 +59,9 @@ ion-app.app-root page-addon-messages-discussion {
             flex-direction: row;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: .5rem!important;
+            margin-bottom: .5rem;
             margin-top: 0;
+            color: $text-color;
 
             ion-avatar {
                 display: block;
@@ -96,7 +98,7 @@ ion-app.app-root page-addon-messages-discussion {
             background-color: darken($item-message-bg, 10%);
         }
 
-        &.item-block .item-inner {
+        .item-inner {
             border-bottom: 0;
             padding: 0;
             margin: 0;
@@ -109,6 +111,9 @@ ion-app.app-root page-addon-messages-discussion {
 
         .addon-message-text {
             display: inline-flex;
+            * {
+                color: $text-color;
+            }
         }
 
         .addon-messages-delete-button {
@@ -125,12 +130,62 @@ ion-app.app-root page-addon-messages-discussion {
             .icon {
                 font-size: 1.4em;
                 line-height: initial;
+                color: $danger;
             }
+        }
+
+        .tail {
+            content: '';
+            width: 0;
+            height: 0;
+            border: 0.5rem solid transparent;
+            position: absolute;
+            touch-action: none;
+        }
+
+        // Defines when an item-message is the user's.
+        &.addon-message-mine {
+            background-color: $item-message-mine-bg;
+            align-self: flex-end;
+
+            &.activated {
+                background-color: darken($item-message-mine-bg, 10%);
+            }
+
+            .spinner {
+                @include float(end);
+                @include margin(2px, -3px, -2px, 5px);
+
+                svg {
+                  width: 16px;
+                  height: 16px;
+                }
+            }
+
+            .tail {
+                @include position(null, 0, 0, null);
+                @include margin-horizontal(null, -0.5rem);
+                border-bottom-color: $item-message-mine-bg;
+            }
+
+            &.activated .tail {
+                border-bottom-color: darken($item-message-mine-bg, 10%);
+            }
+        }
+
+        &.addon-message-not-mine .tail {
+            @include position(null, null, 0, 0);
+            @include margin-horizontal(-0.5rem, null);
+            border-bottom-color: $item-message-bg;
+        }
+
+        &.addon-message-not-mine.activated .tail {
+            border-bottom-color: darken($item-message-bg, 10%);
         }
     }
 
-    .addon-message.addon-message-mine + .addon-message-no-user.addon-message-mine,
-    .addon-message.addon-message-not-mine + .addon-message-no-user.addon-message-not-mine {
+    .item.addon-message.addon-message-mine + .item.addon-message.addon-message-no-user.addon-message-mine,
+    .item.addon-message.addon-message-not-mine + .item.addon-message.addon-message-no-user.addon-message-not-mine {
         h2 {
             margin-bottom: 0;
         }
@@ -139,28 +194,16 @@ ion-app.app-root page-addon-messages-discussion {
         border-top-right-radius: 0;
         border-top-left-radius: 0;
     }
+}
 
-    // Defines when an item-message is the user's.
-    .addon-message-mine {
-        background-color: $item-message-mine-bg;
-        align-self: flex-end;
 
-        &.activated {
-            background-color: darken($item-message-mine-bg, 10%);
-        }
+ion-app.app-root page-addon-messages-discussion.ion-page {
 
-        .spinner {
-            @include float(end);
-            @include margin(2px, -3px, -2px, 5px);
-
-            svg {
-              width: 16px;
-              height: 16px;
-            }
-        }
-    }
+    @include message-page();
 
     .toolbar-title {
+        padding: 0;
+
         img {
             @include margin-horizontal(null, 6px);
         }
@@ -176,6 +219,10 @@ ion-app.app-root page-addon-messages-discussion {
 
         ion-icon {
             @include margin-horizontal(6px, null);
+        }
+
+        &.toolbar-title-ios {
+            justify-content: center;
         }
     }
 }

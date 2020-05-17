@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Component, OnInit, OnDestroy, Injector, Input } from '@angular/core';
+import { Component, OnInit, OnDestroy, Injector, Input, OnChanges, SimpleChange } from '@angular/core';
 import { CoreEventsProvider } from '@providers/events';
-import { CoreUtilsProvider } from '@providers/utils/utils';
 import { CoreSitesProvider } from '@providers/sites';
 import { CoreCoursesProvider } from '@core/courses/providers/courses';
 import { CoreCoursesHelperProvider } from '@core/courses/providers/helper';
@@ -30,7 +29,7 @@ import { CoreBlockBaseComponent } from '@core/block/classes/base-block-component
     selector: 'addon-block-starredcourses',
     templateUrl: 'addon-block-starredcourses.html'
 })
-export class AddonBlockStarredCoursesComponent extends CoreBlockBaseComponent implements OnInit, OnDestroy {
+export class AddonBlockStarredCoursesComponent extends CoreBlockBaseComponent implements OnInit, OnChanges, OnDestroy {
     @Input() downloadEnabled: boolean;
 
     courses = [];
@@ -38,17 +37,19 @@ export class AddonBlockStarredCoursesComponent extends CoreBlockBaseComponent im
         icon: '',
         badge: ''
     };
+    downloadCourseEnabled: boolean;
+    downloadCoursesEnabled: boolean;
 
     protected prefetchIconsInitialized = false;
     protected isDestroyed;
-    protected downloadButtonObserver;
     protected coursesObserver;
+    protected updateSiteObserver;
     protected courseIds = [];
     protected fetchContentDefaultError = 'Error getting starred courses data.';
 
     constructor(injector: Injector, private coursesProvider: CoreCoursesProvider,
             private courseCompletionProvider: AddonCourseCompletionProvider, private eventsProvider: CoreEventsProvider,
-            private courseHelper: CoreCourseHelperProvider, private utils: CoreUtilsProvider,
+            private courseHelper: CoreCourseHelperProvider,
             private courseOptionsDelegate: CoreCourseOptionsDelegate, private coursesHelper: CoreCoursesHelperProvider,
             private sitesProvider: CoreSitesProvider) {
 
@@ -59,18 +60,17 @@ export class AddonBlockStarredCoursesComponent extends CoreBlockBaseComponent im
      * Component being initialized.
      */
     ngOnInit(): void {
+
         // Refresh the enabled flags if enabled.
-        this.downloadButtonObserver = this.eventsProvider.on(CoreCoursesProvider.EVENT_DASHBOARD_DOWNLOAD_ENABLED_CHANGED,
-                (data) => {
-            const wasEnabled = this.downloadEnabled;
+        this.downloadCourseEnabled = !this.coursesProvider.isDownloadCourseDisabledInSite();
+        this.downloadCoursesEnabled = !this.coursesProvider.isDownloadCoursesDisabledInSite();
 
-            this.downloadEnabled = data.enabled;
+        // Refresh the enabled flags if site is updated.
+        this.updateSiteObserver = this.eventsProvider.on(CoreEventsProvider.SITE_UPDATED, () => {
+            this.downloadCourseEnabled = !this.coursesProvider.isDownloadCourseDisabledInSite();
+            this.downloadCoursesEnabled = !this.coursesProvider.isDownloadCoursesDisabledInSite();
 
-            if (!wasEnabled && this.downloadEnabled && this.loaded) {
-                // Download all courses is enabled now, initialize it.
-                this.initPrefetchCoursesIcons();
-            }
-        });
+        }, this.sitesProvider.getCurrentSiteId());
 
         this.coursesObserver = this.eventsProvider.on(CoreCoursesProvider.EVENT_MY_COURSES_UPDATED, () => {
             this.refreshContent();
@@ -80,9 +80,19 @@ export class AddonBlockStarredCoursesComponent extends CoreBlockBaseComponent im
     }
 
     /**
+     * Detect changes on input properties.
+     */
+    ngOnChanges(changes: {[name: string]: SimpleChange}): void {
+        if (changes.downloadEnabled && !changes.downloadEnabled.previousValue && this.downloadEnabled && this.loaded) {
+            // Download all courses is enabled now, initialize it.
+            this.initPrefetchCoursesIcons();
+        }
+    }
+
+    /**
      * Perform the invalidate content function.
      *
-     * @return {Promise<any>} Resolved when done.
+     * @return Resolved when done.
      */
     protected invalidateContent(): Promise<any> {
         const promises = [];
@@ -107,10 +117,13 @@ export class AddonBlockStarredCoursesComponent extends CoreBlockBaseComponent im
     /**
      * Fetch the courses.
      *
-     * @return {Promise<any>} Promise resolved when done.
+     * @return Promise resolved when done.
      */
     protected fetchContent(): Promise<any> {
-        return this.coursesHelper.getUserCoursesWithOptions('timemodified', 0, 'isfavourite').then((courses) => {
+        const showCategories = this.block.configs && this.block.configs.displaycategories &&
+            this.block.configs.displaycategories.value == '1';
+
+        return this.coursesHelper.getUserCoursesWithOptions('timemodified', 0, 'isfavourite', showCategories).then((courses) => {
             this.courses = courses;
 
             this.initPrefetchCoursesIcons();
@@ -136,7 +149,7 @@ export class AddonBlockStarredCoursesComponent extends CoreBlockBaseComponent im
     /**
      * Prefetch all the shown courses.
      *
-     * @return {Promise<any>} Promise resolved when done.
+     * @return Promise resolved when done.
      */
     prefetchCourses(): Promise<any> {
         const initialIcon = this.prefetchCoursesData.icon;
@@ -155,6 +168,6 @@ export class AddonBlockStarredCoursesComponent extends CoreBlockBaseComponent im
     ngOnDestroy(): void {
         this.isDestroyed = true;
         this.coursesObserver && this.coursesObserver.off();
-        this.downloadButtonObserver && this.downloadButtonObserver.off();
+        this.updateSiteObserver && this.updateSiteObserver.off();
     }
 }

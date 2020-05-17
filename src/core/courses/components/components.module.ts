@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,15 +19,17 @@ import { TranslateModule } from '@ngx-translate/core';
 import { CoreComponentsModule } from '@components/components.module';
 import { CoreDirectivesModule } from '@directives/directives.module';
 import { CorePipesModule } from '@pipes/pipes.module';
-import { CoreCoursesCourseProgressComponent } from '../components/course-progress/course-progress';
-import { CoreCoursesCourseListItemComponent } from '../components/course-list-item/course-list-item';
-import { CoreCoursesCourseOptionsMenuComponent } from '../components/course-options-menu/course-options-menu';
+import { CoreCoursesCourseProgressComponent } from './course-progress/course-progress';
+import { CoreCoursesCourseListItemComponent } from './course-list-item/course-list-item';
+import { CoreCoursesCourseOptionsMenuComponent } from './course-options-menu/course-options-menu';
+import { CoreCoursesMyCoursesComponent } from './my-courses/my-courses';
 
 @NgModule({
     declarations: [
         CoreCoursesCourseProgressComponent,
         CoreCoursesCourseListItemComponent,
-        CoreCoursesCourseOptionsMenuComponent
+        CoreCoursesCourseOptionsMenuComponent,
+        CoreCoursesMyCoursesComponent
     ],
     imports: [
         CommonModule,
@@ -42,7 +44,8 @@ import { CoreCoursesCourseOptionsMenuComponent } from '../components/course-opti
     exports: [
         CoreCoursesCourseProgressComponent,
         CoreCoursesCourseListItemComponent,
-        CoreCoursesCourseOptionsMenuComponent
+        CoreCoursesCourseOptionsMenuComponent,
+        CoreCoursesMyCoursesComponent
     ],
     entryComponents: [
         CoreCoursesCourseOptionsMenuComponent

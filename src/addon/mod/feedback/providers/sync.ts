@@ -1,4 +1,4 @@
-// (C) Copyright 2015 Martin Dougiamas
+// (C) Copyright 2015 Moodle Pty Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
 import { Injectable } from '@angular/core';
 import { CoreLoggerProvider } from '@providers/logger';
 import { CoreSitesProvider } from '@providers/sites';
-import { CoreSyncBaseProvider } from '@classes/base-sync';
 import { CoreAppProvider } from '@providers/app';
 import { CoreUtilsProvider } from '@providers/utils/utils';
 import { CoreTextUtilsProvider } from '@providers/utils/text';
@@ -25,13 +24,17 @@ import { AddonModFeedbackProvider } from './feedback';
 import { CoreEventsProvider } from '@providers/events';
 import { TranslateService } from '@ngx-translate/core';
 import { CoreCourseProvider } from '@core/course/providers/course';
+import { CoreCourseActivitySyncBaseProvider } from '@core/course/classes/activity-sync';
+import { CoreCourseLogHelperProvider } from '@core/course/providers/log-helper';
+import { CoreCourseModulePrefetchDelegate } from '@core/course/providers/module-prefetch-delegate';
 import { CoreSyncProvider } from '@providers/sync';
+import { AddonModFeedbackPrefetchHandler } from './prefetch-handler';
 
 /**
  * Service to sync feedbacks.
  */
 @Injectable()
-export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
+export class AddonModFeedbackSyncProvider extends CoreCourseActivitySyncBaseProvider {
 
     static AUTO_SYNCED = 'addon_mod_feedback_autom_synced';
     protected componentTranslate: string;
@@ -40,30 +43,50 @@ export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
             protected appProvider: CoreAppProvider, private feedbackOffline: AddonModFeedbackOfflineProvider,
             private eventsProvider: CoreEventsProvider,  private feedbackProvider: AddonModFeedbackProvider,
             protected translate: TranslateService, private utils: CoreUtilsProvider, protected textUtils: CoreTextUtilsProvider,
-            courseProvider: CoreCourseProvider, syncProvider: CoreSyncProvider, timeUtils: CoreTimeUtilsProvider) {
+            private courseProvider: CoreCourseProvider, syncProvider: CoreSyncProvider, timeUtils: CoreTimeUtilsProvider,
+            private logHelper: CoreCourseLogHelperProvider, prefetchDelegate: CoreCourseModulePrefetchDelegate,
+            prefetchHandler: AddonModFeedbackPrefetchHandler) {
+
         super('AddonModFeedbackSyncProvider', loggerProvider, sitesProvider, appProvider, syncProvider, textUtils, translate,
-                timeUtils);
+                timeUtils, prefetchDelegate, prefetchHandler);
 
         this.componentTranslate = courseProvider.translateModuleName('feedback');
     }
 
     /**
+     * Conveniece function to prefetch data after an update.
+     *
+     * @param module Module.
+     * @param courseId Course ID.
+     * @param regex If regex matches, don't download the data. Defaults to check files and timers.
+     * @param siteId Site ID. If not defined, current site.
+     * @return Promise resolved when done.
+     */
+    prefetchAfterUpdate(module: any, courseId: number, regex?: RegExp, siteId?: string): Promise<any> {
+        regex = regex || /^.*files$|^timers/;
+
+        return super.prefetchAfterUpdate(module, courseId, regex, siteId);
+    }
+
+    /**
      * Try to synchronize all the feedbacks in a certain site or in all sites.
      *
-     * @param  {string} [siteId] Site ID to sync. If not defined, sync all sites.
-     * @return {Promise<any>}    Promise resolved if sync is successful, rejected if sync fails.
+     * @param siteId Site ID to sync. If not defined, sync all sites.
+     * @param force Wether to force sync not depending on last execution.
+     * @return Promise resolved if sync is successful, rejected if sync fails.
      */
-    syncAllFeedbacks(siteId?: string): Promise<any> {
-        return this.syncOnSites('all feedbacks', this.syncAllFeedbacksFunc.bind(this), undefined, siteId);
+    syncAllFeedbacks(siteId?: string, force?: boolean): Promise<any> {
+        return this.syncOnSites('all feedbacks', this.syncAllFeedbacksFunc.bind(this), [force], siteId);
     }
 
     /**
      * Sync all pending feedbacks on a site.
      *
-     * @param  {string} [siteId] Site ID to sync. If not defined, sync all sites.
-     * @param {Promise<any>}     Promise resolved if sync is successful, rejected if sync fails.
+     * @param siteId Site ID to sync. If not defined, sync all sites.
+     * @param force Wether to force sync not depending on last execution.
+     * @param Promise resolved if sync is successful, rejected if sync fails.
      */
-    protected syncAllFeedbacksFunc(siteId?: string): Promise<any> {
+    protected syncAllFeedbacksFunc(siteId?: string, force?: boolean): Promise<any> {
          // Sync all new responses.
         return this.feedbackOffline.getAllFeedbackResponses(siteId).then((responses) => {
             const promises = {};
@@ -76,7 +99,10 @@ export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
                     continue;
                 }
 
-                promises[response.feedbackid] = this.syncFeedbackIfNeeded(response.feedbackid, siteId).then((result) => {
+                promises[response.feedbackid] = force ? this.syncFeedback(response.feedbackid, siteId) :
+                    this.syncFeedbackIfNeeded(response.feedbackid, siteId);
+
+                promises[response.feedbackid].then((result) => {
                     if (result && result.updated) {
                         // Sync successful, send event.
                         this.eventsProvider.trigger(AddonModFeedbackSyncProvider.AUTO_SYNCED, {
@@ -96,9 +122,9 @@ export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
     /**
      * Sync a feedback only if a certain time has passed since the last time.
      *
-     * @param  {number} feedbackId  Feedback ID.
-     * @param  {string} [siteId]    Site ID. If not defined, current site.
-     * @return {Promise<any>}       Promise resolved when the feedback is synced or if it doesn't need to be synced.
+     * @param feedbackId Feedback ID.
+     * @param siteId Site ID. If not defined, current site.
+     * @return Promise resolved when the feedback is synced or if it doesn't need to be synced.
      */
     syncFeedbackIfNeeded(feedbackId: number, siteId?: string): Promise<any> {
         siteId = siteId || this.sitesProvider.getCurrentSiteId();
@@ -113,9 +139,9 @@ export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
     /**
      * Synchronize all offline responses of a feedback.
      *
-     * @param  {number} feedbackId Feedback ID to be synced.
-     * @param  {string} [siteId] Site ID. If not defined, current site.
-     * @return {Promise<any>}    Promise resolved if sync is successful, rejected otherwise.
+     * @param feedbackId Feedback ID to be synced.
+     * @param siteId Site ID. If not defined, current site.
+     * @return Promise resolved if sync is successful, rejected otherwise.
      */
     syncFeedback(feedbackId: number, siteId?: string): Promise<any> {
         siteId = siteId || this.sitesProvider.getCurrentSiteId();
@@ -144,10 +170,15 @@ export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
 
         this.logger.debug(`Try to sync feedback '${feedbackId}' in site ${siteId}'`);
 
-        // Get offline responses to be sent.
-        const syncPromise = this.feedbackOffline.getFeedbackResponses(feedbackId, siteId).catch(() => {
-            // No offline data found, return empty array.
-            return [];
+        // Sync offline logs.
+        const syncPromise = this.logHelper.syncIfNeeded(AddonModFeedbackProvider.COMPONENT, feedbackId, siteId).catch(() => {
+            // Ignore errors.
+        }).then(() => {
+            // Get offline responses to be sent.
+            return this.feedbackOffline.getFeedbackResponses(feedbackId, siteId).catch(() => {
+                // No offline data found, return empty array.
+                return [];
+            });
         }).then((responses) => {
             if (!responses.length) {
                 // Nothing to sync.
@@ -189,7 +220,7 @@ export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
                     return Promise.all(promises);
                 }
 
-                return this.feedbackProvider.getCurrentCompletedTimeModified(feedbackId, siteId).then((timemodified) => {
+                return this.feedbackProvider.getCurrentCompletedTimeModified(feedbackId, true, siteId).then((timemodified) => {
                     // Sort by page.
                     responses.sort((a, b) => {
                         return a.page - b.page;
@@ -209,8 +240,10 @@ export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
             });
         }).then(() => {
             if (result.updated) {
-                // Data has been sent to server. Now invalidate the WS calls.
-                return this.feedbackProvider.invalidateAllFeedbackData(feedbackId, siteId).catch(() => {
+                // Data has been sent to server, update data.
+                return this.courseProvider.getModuleBasicInfoByInstance(feedbackId, 'feedback', siteId).then((module) => {
+                    return this.prefetchAfterUpdate(module, courseId, undefined, siteId);
+                }).catch(() => {
                     // Ignore errors.
                 });
             }
@@ -227,12 +260,12 @@ export class AddonModFeedbackSyncProvider extends CoreSyncBaseProvider {
     /**
      * Convenience function to sync process page calls.
      *
-     * @param  {any}          feedback     Feedback object.
-     * @param  {any}          data         Response data.
-     * @param  {string}       siteId       Site Id.
-     * @param  {number}       timemodified Current completed modification time.
-     * @param  {any}          result       Result object to be modified.
-     * @return {Promise<any>}              Resolve when done or rejected with error.
+     * @param feedback Feedback object.
+     * @param data Response data.
+     * @param siteId Site Id.
+     * @param timemodified Current completed modification time.
+     * @param result Result object to be modified.
+     * @return Resolve when done or rejected with error.
      */
     protected processPage(feedback: any, data: any, siteId: string, timemodified: number, result: any): Promise<any> {
         // Delete all pages that are submitted before changing website.

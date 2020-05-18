@@ -1,14 +1,14 @@
 {
-    "app_id": "com.moodle.moodlemobile",
-    "appname": "Moodle Mobile",
-    "desktopappname": "Moodle Desktop",
+    "app_id": "br.com.ieex.excelencia",
+    "appname": "Excelência Mobile",
+    "desktopappname": "Excelência Desktop",
     "versioncode": 3820,
     "versionname": "3.8.2",
     "cache_update_frequency_usually": 420000,
     "cache_update_frequency_often": 1200000,
     "cache_update_frequency_sometimes": 3600000,
     "cache_update_frequency_rarely": 43200000,
-    "default_lang": "en",
+    "default_lang": "pt-br",
     "languages": {
         "ar": "عربي",
         "bg": "Български",
@@ -61,12 +61,12 @@
     "wsextservice": "local_mobile",
     "demo_sites": {
         "student": {
-            "url": "https:\/\/school.moodledemo.net",
+            "url": "https:\/\/excelenciaconcursos.com.br",
             "username": "student",
             "password": "moodle"
         },
         "teacher": {
-            "url": "https:\/\/school.moodledemo.net",
+            "url": "https:\/\/excelenciaconcursos.com.br",
             "username": "teacher",
             "password": "moodle"
         }
@@ -77,18 +77,18 @@
         93.75
     ],
     "customurlscheme": "moodlemobile",
-    "siteurl": "",
-    "sitename": "",
+    "siteurl": "https://excelenciaconcursos.com.br",
+    "sitename": "Excelência Concursos",
     "multisitesdisplay": "",
     "skipssoconfirmation": false,
-    "forcedefaultlanguage": false,
-    "privacypolicy": "https:\/\/moodle.net\/moodle-app-privacy\/",
-    "notificoncolor": "#f98012",
-    "statusbarbg": false,
+    "forcedefaultlanguage": true,
+    "privacypolicy": "https:\/\/ieex.com.br\/legal\/privacy-policy\/",
+    "notificoncolor": "#b70000",
+    "statusbarbg": true,
     "statusbarlighttext": false,
-    "statusbarbgios": "#f98012",
+    "statusbarbgios": "#940000",
     "statusbarlighttextios": true,
-    "statusbarbgandroid": "#df7310",
+    "statusbarbgandroid": "#940000",
     "statusbarlighttextandroid": true,
     "statusbarbgremotetheme": "#000000",
     "statusbarlighttextremotetheme": true,
